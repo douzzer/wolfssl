@@ -13959,7 +13959,7 @@ static int test_wc_MakeRsaKey (void)
 
     RsaKey  genKey;
     WC_RNG  rng;
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int     bits = 1024;
     #else
     int     bits = 2048;
@@ -14620,7 +14620,7 @@ static int test_wc_RsaKeyToDer (void)
     RsaKey  genKey;
     WC_RNG  rng;
     byte*   der;
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int     bits = 1024;
     word32  derSz = 611;
     /* (2 x 128) + 2 (possible leading 00) + (5 x 64) + 5 (possible leading 00)
@@ -14730,7 +14730,7 @@ static int test_wc_RsaKeyToPublicDer (void)
     RsaKey      key;
     WC_RNG      rng;
     byte*       der;
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int         bits = 1024;
     word32      derLen = 162;
     #else
@@ -14829,7 +14829,7 @@ static int test_wc_RsaPublicEncryptDecrypt (void)
     const char* inStr = "Everyone gets Friday off.";
     word32  plainLen = 25;
     word32  inLen = (word32)XSTRLEN(inStr);
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int         bits = 1024;
     word32  cipherLen = 128;
     #else
@@ -14919,7 +14919,7 @@ static int test_wc_RsaPublicEncryptDecrypt_ex (void)
     const word32 plainSz = 25;
     byte*   res = NULL;
     int     idx = 0;
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int          bits = 1024;
     const word32 cipherSz = 128;
     #else
@@ -15036,7 +15036,7 @@ static int test_wc_RsaSSL_SignVerify (void)
     const word32 plainSz = 25;
     word32  inLen = (word32)XSTRLEN(inStr);
     word32  idx = 0;
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int          bits = 1024;
     const word32 outSz = 128;
     #else
@@ -15198,7 +15198,7 @@ static int test_wc_RsaEncryptSize (void)
     }
 
     printf(testingFmt, "wc_RsaEncryptSize()");
-#ifndef WOLFSSL_SP_MATH
+#if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     if (ret == 0) {
         ret = MAKE_RSA_KEY(&key, 1024, WC_RSA_EXPONENT, &rng);
         if (ret == 0) {
@@ -15268,7 +15268,7 @@ static int test_wc_RsaFlattenPublicKey (void)
     byte    n[256];
     word32  eSz = sizeof(e);
     word32  nSz = sizeof(n);
-    #ifndef WOLFSSL_SP_MATH
+    #if !defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)
     int         bits = 1024;
     #else
     int         bits = 2048;
@@ -27642,6 +27642,8 @@ static void test_wolfSSL_BN(void)
     AssertIntEQ((int)(value[0] & 0x03), 3);
     BN_free(val);
 
+#if !defined(WOLFSSL_SP_MATH) && (!defined(WOLFSSL_SP_MATH_ALL) || \
+                                               defined(WOLFSSL_SP_INT_NEGATIVE))
     AssertIntEQ(BN_set_word(a, 1), SSL_SUCCESS);
     AssertIntEQ(BN_set_word(b, 5), SSL_SUCCESS);
     AssertIntEQ(BN_is_word(a, (WOLFSSL_BN_ULONG)BN_get_word(a)), SSL_SUCCESS);
@@ -27656,6 +27658,7 @@ static void test_wolfSSL_BN(void)
     }
 #endif
     AssertIntEQ(BN_get_word(c), 4);
+#endif
 
     BN_free(a);
     BN_free(b);

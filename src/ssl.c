@@ -545,7 +545,7 @@ WOLFSSL* wolfSSL_new(WOLFSSL_CTX* ctx)
 
     ssl = (WOLFSSL*) XMALLOC(sizeof(WOLFSSL), ctx->heap, DYNAMIC_TYPE_SSL);
     if (ssl)
-        if ( (ret = InitSSL(ssl, ctx, 0)) < 0) {
+        if (InitSSL(ssl, ctx, 0) < 0) {
             FreeSSL(ssl, ctx->heap);
             ssl = 0;
         }
@@ -6651,7 +6651,7 @@ int ProcessFile(WOLFSSL_CTX* ctx, const char* fname, int format, int type,
         dynamic = 1;
     }
 
-    if ( (ret = (int)XFREAD(myBuffer, 1, sz, file)) != sz)
+    if ((int)XFREAD(myBuffer, 1, sz, file) != sz)
         ret = WOLFSSL_BAD_FILE;
     else {
         /* Try to detect type by parsing cert header and footer */
@@ -6869,7 +6869,7 @@ int wolfSSL_CertManagerVerify(WOLFSSL_CERT_MANAGER* cm, const char* fname,
         dynamic = 1;
     }
 
-    if ( (ret = (int)XFREAD(myBuffer, 1, sz, file)) != sz)
+    if ((int)XFREAD(myBuffer, 1, sz, file) != sz)
         ret = WOLFSSL_BAD_FILE;
     else
         ret = wolfSSL_CertManagerVerifyBuffer(cm, myBuffer, sz, format);
@@ -7294,7 +7294,7 @@ static int wolfSSL_SetTmpDH_file_wrapper(WOLFSSL_CTX* ctx, WOLFSSL* ssl,
         dynamic = 1;
     }
 
-    if ( (ret = (int)XFREAD(myBuffer, 1, sz, file)) != sz)
+    if ((int)XFREAD(myBuffer, 1, sz, file) != sz)
         ret = WOLFSSL_BAD_FILE;
     else {
         if (ssl)
@@ -46055,7 +46055,6 @@ int wolfSSL_BN_mod_mul(WOLFSSL_BIGNUM *r, const WOLFSSL_BIGNUM *a,
     return SSL_FAILURE;
 }
 
-#ifdef OPENSSL_EXTRA
 const WOLFSSL_BIGNUM* wolfSSL_BN_value_one(void)
 {
     WOLFSSL_MSG("wolfSSL_BN_value_one");
@@ -46073,7 +46072,6 @@ const WOLFSSL_BIGNUM* wolfSSL_BN_value_one(void)
 
     return bn_one;
 }
-#endif
 
 /* return compliant with OpenSSL
  *   size of BIGNUM in bytes, 0 if error */
