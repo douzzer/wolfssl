@@ -142,7 +142,8 @@ int HashTest(void)
     if ( (ret = hmac_sha_test()) ) {
         printf( "   HMAC-SHA test failed!\n");
         return ret;
-    } else
+    }
+    else
         printf( "   HMAC-SHA test passed!\n");
     #endif
 
@@ -150,7 +151,8 @@ int HashTest(void)
         if ( (ret = hmac_sha224_test()) ) {
             printf( "   HMAC-SHA224 test failed!\n");
             return ret;
-        } else
+        }
+        else
             printf( "   HMAC-SHA224 test passed!\n");
     #endif
 
@@ -158,7 +160,8 @@ int HashTest(void)
         if ( (ret = hmac_sha256_test()) ) {
             printf( "   HMAC-SHA256 test failed!\n");
             return ret;
-        } else
+        }
+        else
             printf( "   HMAC-SHA256 test passed!\n");
     #endif
 
@@ -166,7 +169,8 @@ int HashTest(void)
         if ( (ret = hmac_sha384_test()) ) {
             printf( "   HMAC-SHA384 test failed!\n");
             return ret;
-        } else
+        }
+        else
             printf( "   HMAC-SHA384 test passed!\n");
     #endif
 #endif
