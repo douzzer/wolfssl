@@ -9959,7 +9959,9 @@ int CopyDecodedToX509(WOLFSSL_X509* x509, DecodedCert* dCert)
     XMEMCPY(x509->subject.raw, dCert->subjectRaw, x509->subject.rawLen);
 #ifdef WOLFSSL_CERT_EXT
     x509->issuer.rawLen = min(dCert->issuerRawLen, sizeof(x509->issuer.raw));
-    XMEMCPY(x509->issuer.raw, dCert->issuerRaw, x509->issuer.rawLen);
+    if (x509->issuer.rawLen) {
+      XMEMCPY(x509->issuer.raw, dCert->issuerRaw, x509->issuer.rawLen);
+    }
 #endif
 #endif
 

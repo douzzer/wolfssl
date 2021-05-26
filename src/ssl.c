@@ -41648,7 +41648,9 @@ void* wolfSSL_GetDhAgreeCtx(WOLFSSL* ssl)
 
     #ifdef WOLFSSL_CERT_EXT
         if (x509->subjKeyIdSz < CTC_MAX_SKID_SIZE) {
-            XMEMCPY(cert->skid, x509->subjKeyId, x509->subjKeyIdSz);
+            if (x509->subjKeyId) {
+                XMEMCPY(cert->skid, x509->subjKeyId, x509->subjKeyIdSz);
+            }
             cert->skidSz = (int)x509->subjKeyIdSz;
         }
         else {
@@ -41657,7 +41659,9 @@ void* wolfSSL_GetDhAgreeCtx(WOLFSSL* ssl)
         }
 
         if (x509->authKeyIdSz < CTC_MAX_AKID_SIZE) {
-            XMEMCPY(cert->akid, x509->authKeyId, x509->authKeyIdSz);
+            if (x509->authKeyId) {
+                XMEMCPY(cert->akid, x509->authKeyId, x509->authKeyIdSz);
+            }
             cert->akidSz = (int)x509->authKeyIdSz;
         }
         else {
@@ -44010,8 +44014,10 @@ err:
 
         objBuf[0] = ASN_OBJECT_ID; objSz++;
         objSz += SetLength(oidSz, objBuf + 1);
-        XMEMCPY(objBuf + objSz, oid, oidSz);
-        objSz     += oidSz;
+        if (oidSz) {
+            XMEMCPY(objBuf + objSz, oid, oidSz);
+            objSz     += oidSz;
+        }
 
         if (obj->objSz == 0 || objSz != obj->objSz) {
             obj->objSz = objSz;
