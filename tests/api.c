@@ -14657,9 +14657,9 @@ static int test_wc_RabbitSetKey (void)
     int     ret = 0;
 #ifndef NO_RABBIT
     Rabbit  rabbit;
-    const char* key =  "\xAC\xC3\x51\xDC\xF1\x62\xFC\x3B"
+    ALIGN32 const char key[] =  "\xAC\xC3\x51\xDC\xF1\x62\xFC\x3B"
                         "\xFE\x36\x3D\x2E\x29\x13\x28\x91";
-    const char* iv =   "\x59\x7E\x26\xC1\x75\xF5\x73\xC3";
+    ALIGN32 const char iv[] =   "\x59\x7E\x26\xC1\x75\xF5\x73\xC3";
 
     printf(testingFmt, "wc_RabbitSetKey()");
 
@@ -14693,10 +14693,10 @@ static int test_wc_RabbitProcess (void)
     Rabbit  enc, dec;
     byte    cipher[25];
     byte    plain[25];
-    const char* key     =  "\xAC\xC3\x51\xDC\xF1\x62\xFC\x3B"
+    ALIGN32 const char key[]     =  "\xAC\xC3\x51\xDC\xF1\x62\xFC\x3B"
                             "\xFE\x36\x3D\x2E\x29\x13\x28\x91";
-    const char* iv      =   "\x59\x7E\x26\xC1\x75\xF5\x73\xC3";
-    const char* input   =   TEST_STRING;
+    ALIGN32 const char iv[]      =   "\x59\x7E\x26\xC1\x75\xF5\x73\xC3";
+    ALIGN32 const char input[TEST_STRING_SZ]   =   TEST_STRING;
     unsigned long int inlen = (unsigned long int)TEST_STRING_SZ;
 
     /* Initialize stack variables. */
@@ -16841,9 +16841,9 @@ static int test_wc_Hc128_SetKey (void)
     int ret = 0;
 #ifdef HAVE_HC128
     HC128 ctx;
-    const char* key = "\x80\x00\x00\x00\x00\x00\x00\x00"
+    ALIGN32 const char key[] = "\x80\x00\x00\x00\x00\x00\x00\x00"
                       "\x00\x00\x00\x00\x00\x00\x00\x00";
-    const char* iv =  "\x0D\x74\xDB\x42\xA9\x10\x77\xDE"
+    ALIGN32 const char iv[] =  "\x0D\x74\xDB\x42\xA9\x10\x77\xDE"
                       "\x45\xAC\x13\x7A\xE1\x48\xAF\x16";
 
     printf(testingFmt, "wc_Hc128_SetKey()");
@@ -16876,9 +16876,9 @@ static int test_wc_Hc128_Process (void)
 #ifdef HAVE_HC128
     HC128 enc;
     HC128 dec;
-    const char* key =  "\x0F\x62\xB5\x08\x5B\xAE\x01\x54"
+    ALIGN32 const char key[] =  "\x0F\x62\xB5\x08\x5B\xAE\x01\x54"
                        "\xA7\xFA\x4D\xA0\xF3\x46\x99\xEC";
-    const char* input = "Encrypt Hc128, and then Decrypt.";
+    ALIGN32 const char input[] = "Encrypt Hc128, and then Decrypt.";
     size_t inlen = XSTRLEN(input) + 1; /* Add null terminator */
     byte cipher[inlen];
     byte plain[inlen];
