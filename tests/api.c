@@ -6655,6 +6655,11 @@ static void test_wolfSSL_mcast(void)
                 clientRandom, serverRandom, suite);
     AssertIntEQ(result, WOLFSSL_SUCCESS);
 
+    result = wolfSSL_set_read_fd(ssl, -1); /* needed to set ssl->IOCB_ReadCtx =
+                                            * &ssl->buffers.dtlsCtx
+                                            */
+    AssertIntEQ(result, WOLFSSL_SUCCESS);
+
     result = wolfSSL_mcast_read(ssl, &newId, buf, sizeof(buf));
     AssertIntLE(result, 0);
     AssertIntLE(newId, 100);

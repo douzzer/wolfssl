@@ -86,7 +86,7 @@ static WC_INLINE void store32( void *dst, word32 w )
 static WC_INLINE void store64( void *dst, word64 w )
 {
 #if defined(LITTLE_ENDIAN_ORDER)
-  *( word64 * )( dst ) = w;
+  XMEMCPY(dst, &w, sizeof w);
 #else
   byte *p = ( byte * )dst;
   *p++ = ( byte )w; w >>= 8;

@@ -570,7 +570,9 @@ static word64 Load64BitBigEndian(const byte* a)
 
     return n;
 #else
-    return *(const word64*)a;
+    word64 ret;
+    XMEMCPY(&ret, a, sizeof ret);
+    return ret;
 #endif
 }
 
