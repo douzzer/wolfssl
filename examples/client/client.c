@@ -30,6 +30,11 @@
 
 #include <wolfssl/ssl.h>
 
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+#    include <wolfsentry/wolfsentry.h>
+#    include <wolfsentry/wolfsentry_util.h>
+#endif
+
 #if defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET)
         #include <stdio.h>
         #include <string.h>
@@ -1520,6 +1525,11 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     WOLFSSL_CTX*     ctx     = 0;
     WOLFSSL*         ssl     = 0;
 
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+    struct wolfsentry_context *wolfsentry = NULL;
+    wolfsentry_errcode_t wolfsentry_ret;
+#endif
+
     WOLFSSL*         sslResume = 0;
     WOLFSSL_SESSION* session = 0;
     byte*            flatSession = NULL;
@@ -2508,6 +2518,83 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         err_sys("Single Threaded new rng at CTX failed");
     }
 #endif
+
+
+
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+    wolfsentry_ret =  wolfsentry_init(NULL /* hpi */, NULL /* default config */,
+                                      &wolfsentry);
+    if (wolfsentry_ret < 0) {
+        fprintf(stderr, "wolfsentry_init() returned " WOLFSENTRY_ERROR_FMT "\n",
+                WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+        err_sys("unable to initialize wolfSentry");
+    }
+
+    {
+        struct wolfsentry_route_table *table;
+
+        if ((wolfsentry_ret = wolfsentry_route_get_table_static(wolfsentry,
+                                                                &table)) < 0)
+            fprintf(stderr, "wolfsentry_route_get_table_static() returned "
+                    WOLFSENTRY_ERROR_FMT "\n",
+                    WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+        if (wolfsentry_ret >= 0) {
+            if ((wolfsentry_ret = wolfsentry_route_table_default_policy_set(
+                     wolfsentry, table,
+                     WOLFSENTRY_ACTION_RES_REJECT|WOLFSENTRY_ACTION_RES_STOP))
+                < 0)
+                fprintf(stderr,
+                        "wolfsentry_route_table_default_policy_set() returned "
+                        WOLFSENTRY_ERROR_FMT "\n",
+                        WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+        }
+
+        if (wolfsentry_ret >= 0) {
+            struct {
+                struct wolfsentry_sockaddr sa;
+                byte buf[16];
+            } remote, local;
+            wolfsentry_ent_id_t id;
+            wolfsentry_action_res_t action_results;
+
+            memset(&remote, 0, sizeof remote);
+            memset(&local, 0, sizeof local);
+#ifdef TEST_IPV6
+            remote.sa.sa_family = local.sa.sa_family = AF_INET6;
+            remote.sa.addr_len = 128;
+            memcpy(remote.sa.addr, "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\001", 16);
+#else
+            remote.sa.sa_family = local.sa.sa_family = AF_INET;
+            remote.sa.addr_len = 32;
+            memcpy(remote.sa.addr, "\177\000\000\001", 4);
+#endif
+
+            if ((wolfsentry_ret = wolfsentry_route_insert_static
+                 (wolfsentry, NULL /* caller_context */, &remote.sa, &local.sa,
+                  WOLFSENTRY_ROUTE_FLAG_GREENLISTED              |
+                  WOLFSENTRY_ROUTE_FLAG_DIRECTION_OUT            |
+                  WOLFSENTRY_ROUTE_FLAG_PARENT_EVENT_WILDCARD    |
+                  WOLFSENTRY_ROUTE_FLAG_REMOTE_INTERFACE_WILDCARD|
+                  WOLFSENTRY_ROUTE_FLAG_LOCAL_INTERFACE_WILDCARD |
+                  WOLFSENTRY_ROUTE_FLAG_SA_LOCAL_ADDR_WILDCARD   |
+                  WOLFSENTRY_ROUTE_FLAG_SA_PROTO_WILDCARD        |
+                  WOLFSENTRY_ROUTE_FLAG_SA_REMOTE_PORT_WILDCARD  |
+                  WOLFSENTRY_ROUTE_FLAG_SA_LOCAL_PORT_WILDCARD,
+                  0 /* event_label_len */, 0 /* event_label */, &id,
+                  &action_results)) < 0)
+                fprintf(stderr, "wolfsentry_route_insert_static() returned "
+                        WOLFSENTRY_ERROR_FMT "\n",
+                        WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+        }
+
+        if (wolfsentry_ret < 0)
+            err_sys("unable to configure route table");
+    }
+
+#endif
+
+
+
 
     if (cipherList && !useDefCipherList) {
         if (wolfSSL_CTX_set_cipher_list(ctx, cipherList) != WOLFSSL_SUCCESS) {

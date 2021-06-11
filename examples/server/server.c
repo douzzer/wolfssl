@@ -37,6 +37,8 @@
 
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
 #    include <wolfsentry/wolfsentry.h>
+#    include <wolfsentry/wolfsentry_util.h>
+#    include <wolfsentry/wolfsentry_json.h>
 #endif
 
 #if defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET)
@@ -281,6 +283,8 @@ static int TestEmbedSendTo(WOLFSSL* ssl, char *buf, int sz, void *ctx)
 
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
 
+static const char *wolfsentry_config_path = NULL;
+
 struct wolfsentry_data {
     struct wolfsentry_sockaddr remote;
     byte remote_addrbuf[16];
@@ -389,7 +393,7 @@ static int wolfSentry_NetworkFilterCallback(
     }
 
     printf("wolfSentry got network filter callback: family=%d proto=%d rport=%d"
-           "lport=%d raddr=%s laddr=%s interface=%d; decision=%d (%s)\n",
+           " lport=%d raddr=%s laddr=%s interface=%d; decision=%d (%s)\n",
            data->remote.sa_family,
            data->remote.sa_proto,
            data->remote.sa_port,
@@ -1450,12 +1454,19 @@ THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
     /* Reinitialize the global myVerifyAction. */
     myVerifyAction = VERIFY_OVERRIDE_ERROR;
 
-    /* Not Used: h, z, W, X, 7, 9 */
-    while ((ch = mygetopt(argc, argv, "?:"
+    static const struct mygetopt_long_config long_options[] = {
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+        { "wolfsentry-config", 1, 256 },
+#endif
+        { 0, 0, 0 }
+    };
+
+    /* Not Used: h, z, W, X, 7 */
+    while ((ch = mygetopt_long(argc, argv, "?:"
                 "abc:defgijk:l:mnop:q:rstu;v:wxy"
                 "A:B:C:D:E:FGH:IJKL:MNO:PQR:S:T;UVYZ:"
                 "01:23:4:5689"
-                "@#")) != -1) {
+                "@#", long_options, 0)) != -1) {
         switch (ch) {
             case '?' :
                 if(myoptarg!=NULL) {
@@ -1928,6 +1939,12 @@ THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
 #endif
             }
 
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+            case 256:
+                wolfsentry_config_path = myoptarg;
+                break;
+#endif
+
             default:
                 Usage();
                 XEXIT_T(MY_EX_USAGE);
@@ -2081,7 +2098,51 @@ THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
         wolfsentry_data_index = wolfSSL_get_ex_new_index(0, NULL, NULL, NULL,
                                                          NULL);
 
-    {
+    if (wolfsentry_config_path != NULL) {
+        char buf[512], err_buf[512];
+        struct wolfsentry_json_process_state *jps;
+
+        FILE *f = fopen(wolfsentry_config_path, "r");
+
+        if (f == NULL) {
+            fprintf(stderr, "fopen(%s): %s\n",wolfsentry_config_path,strerror(errno));
+            err_sys_ex(catastrophic, "unable to open wolfSentry config file");
+        }
+
+        if ((wolfsentry_ret = wolfsentry_config_json_init(
+                 wolfsentry,
+                 WOLFSENTRY_CONFIG_LOAD_FLAG_NONE,
+                 &jps)) < 0) {
+            fprintf(stderr, "wolfsentry_config_json_init() returned "
+                    WOLFSENTRY_ERROR_FMT "\n",
+                    WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+            err_sys_ex(catastrophic, "error while initlalizing wolfSentry config parser");
+        }
+
+        for (;;) {
+            size_t n = fread(buf, 1, sizeof buf, f);
+            if ((n < sizeof buf) && ferror(f)) {
+                fprintf(stderr,"fread(%s): %s\n",wolfsentry_config_path, strerror(errno));
+                err_sys_ex(catastrophic, "error while reading wolfSentry config file");
+            }
+
+            wolfsentry_ret = wolfsentry_config_json_feed(jps, buf, n, err_buf, sizeof err_buf);
+            if (wolfsentry_ret < 0) {
+                fprintf(stderr, "%.*s\n", (int)sizeof err_buf, err_buf);
+                err_sys_ex(catastrophic, "error while loading wolfSentry config file");
+            }
+            if ((n < sizeof buf) && feof(f))
+                break;
+        }
+        fclose(f);
+
+        if ((wolfsentry_ret = wolfsentry_config_json_fini(jps, err_buf, sizeof err_buf)) < 0) {
+            fprintf(stderr, "%.*s\n", (int)sizeof err_buf, err_buf);
+            err_sys_ex(catastrophic, "error while loading wolfSentry config file");
+        }
+
+    } else {
+
         struct wolfsentry_route_table *table;
 
         if ((wolfsentry_ret = wolfsentry_route_get_table_static(wolfsentry,
@@ -2124,7 +2185,7 @@ THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
                  (wolfsentry, NULL /* caller_context */, &remote.sa, &local.sa,
                   WOLFSENTRY_ROUTE_FLAG_GREENLISTED              |
                   WOLFSENTRY_ROUTE_FLAG_DIRECTION_IN             |
-                  WOLFSENTRY_ROUTE_FLAG_TRIGGER_WILDCARD         |
+                  WOLFSENTRY_ROUTE_FLAG_PARENT_EVENT_WILDCARD    |
                   WOLFSENTRY_ROUTE_FLAG_REMOTE_INTERFACE_WILDCARD|
                   WOLFSENTRY_ROUTE_FLAG_LOCAL_INTERFACE_WILDCARD |
                   WOLFSENTRY_ROUTE_FLAG_SA_LOCAL_ADDR_WILDCARD   |
