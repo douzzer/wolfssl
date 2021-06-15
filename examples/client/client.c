@@ -33,7 +33,15 @@
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
 #    include <wolfsentry/wolfsentry.h>
 #    include <wolfsentry/wolfsentry_util.h>
+#    include <wolfsentry/wolfsentry_json.h>
+
+static struct wolfsentry_context *wolfsentry = NULL;
+
+#ifndef NO_FILESYSTEM
+static const char *wolfsentry_config_path = NULL;
 #endif
+
+#endif /* WOLFSSL_WOLFSENTRY_HOOKS */
 
 #if defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET)
         #include <stdio.h>
@@ -43,6 +51,10 @@
 #endif
 
 #include <wolfssl/test.h>
+
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+#define tcp_connect(sockfd, ip, port, udp, sctp, ssl) tcp_connect_with_wolfSentry(sockfd, ip, port, udp, sctp, ssl, wolfsentry)
+#endif
 
 #include <examples/client/client.h>
 #include <wolfssl/error-ssl.h>
@@ -1526,7 +1538,6 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     WOLFSSL*         ssl     = 0;
 
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
-    struct wolfsentry_context *wolfsentry = NULL;
     wolfsentry_errcode_t wolfsentry_ret;
 #endif
 
@@ -1547,6 +1558,12 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
                                        */
 #ifndef WOLFSSL_VXWORKS
     int    ch;
+    static const struct mygetopt_long_config long_options[] = {
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+        { "wolfsentry-config", 1, 256 },
+#endif
+        { 0, 0, 0 }
+    };
 #endif
     int    version = CLIENT_INVALID_VERSION;
     int    minVersion = CLIENT_INVALID_VERSION;
@@ -1746,11 +1763,11 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 
 #ifndef WOLFSSL_VXWORKS
     /* Not used: All used */
-    while ((ch = mygetopt(argc, argv, "?:"
+    while ((ch = mygetopt_long(argc, argv, "?:"
             "ab:c:defgh:i;jk:l:mnop:q:rstu;v:wxyz"
             "A:B:CDE:F:GH:IJKL:M:NO:PQRS:TUVW:XYZ:"
             "01:23:4567:89"
-            "@#")) != -1) {
+            "@#", long_options, 0)) != -1) {
         switch (ch) {
             case '?' :
                 if(myoptarg!=NULL) {
@@ -2241,8 +2258,8 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && \
     !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSL_DIR)
                     useCertFolder = 1;
-                    break;
 #endif
+                    break;
             case '@' :
             {
 #ifdef HAVE_WC_INTROSPECTION
@@ -2276,6 +2293,14 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
                 XEXIT_T(MY_EX_USAGE);
 #endif
             }
+
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+            case 256:
+#ifndef NO_FILESYSTEM
+                wolfsentry_config_path = myoptarg;
+#endif
+                break;
+#endif
 
             default:
                 Usage();
@@ -2530,7 +2555,58 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         err_sys("unable to initialize wolfSentry");
     }
 
+    if (wolfsentry_data_index < 0)
+        wolfsentry_data_index = wolfSSL_get_ex_new_index(0, NULL, NULL, NULL,
+                                                         NULL);
+
+#ifndef NO_FILESYSTEM
+    if (wolfsentry_config_path != NULL) {
+        char buf[512], err_buf[512];
+        struct wolfsentry_json_process_state *jps;
+
+        FILE *f = fopen(wolfsentry_config_path, "r");
+
+        if (f == NULL) {
+            fprintf(stderr, "fopen(%s): %s\n",wolfsentry_config_path,strerror(errno));
+            err_sys("unable to open wolfSentry config file");
+        }
+
+        if ((wolfsentry_ret = wolfsentry_config_json_init(
+                 wolfsentry,
+                 WOLFSENTRY_CONFIG_LOAD_FLAG_NONE,
+                 &jps)) < 0) {
+            fprintf(stderr, "wolfsentry_config_json_init() returned "
+                    WOLFSENTRY_ERROR_FMT "\n",
+                    WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+            err_sys("error while initlalizing wolfSentry config parser");
+        }
+
+        for (;;) {
+            size_t n = fread(buf, 1, sizeof buf, f);
+            if ((n < sizeof buf) && ferror(f)) {
+                fprintf(stderr,"fread(%s): %s\n",wolfsentry_config_path, strerror(errno));
+                err_sys("error while reading wolfSentry config file");
+            }
+
+            wolfsentry_ret = wolfsentry_config_json_feed(jps, buf, n, err_buf, sizeof err_buf);
+            if (wolfsentry_ret < 0) {
+                fprintf(stderr, "%.*s\n", (int)sizeof err_buf, err_buf);
+                err_sys("error while loading wolfSentry config file");
+            }
+            if ((n < sizeof buf) && feof(f))
+                break;
+        }
+        fclose(f);
+
+        if ((wolfsentry_ret = wolfsentry_config_json_fini(jps, err_buf, sizeof err_buf)) < 0) {
+            fprintf(stderr, "%.*s\n", (int)sizeof err_buf, err_buf);
+            err_sys("error while loading wolfSentry config file");
+        }
+
+    } else
+#endif /* !NO_FILESYSTEM */
     {
+
         struct wolfsentry_route_table *table;
 
         if ((wolfsentry_ret = wolfsentry_route_get_table_static(wolfsentry,
@@ -2541,7 +2617,7 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         if (wolfsentry_ret >= 0) {
             if ((wolfsentry_ret = wolfsentry_route_table_default_policy_set(
                      wolfsentry, table,
-                     WOLFSENTRY_ACTION_RES_REJECT|WOLFSENTRY_ACTION_RES_STOP))
+                     WOLFSENTRY_ACTION_RES_ACCEPT))
                 < 0)
                 fprintf(stderr,
                         "wolfsentry_route_table_default_policy_set() returned "
@@ -2591,10 +2667,12 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
             err_sys("unable to configure route table");
     }
 
+    if (wolfSSL_CTX_set_ConnectFilter(
+            ctx,
+            (NetworkFilterCallback_t)wolfSentry_NetworkFilterCallback,
+            wolfsentry) < 0)
+        err_sys("unable to install wolfSentry_NetworkFilterCallback");
 #endif
-
-
-
 
     if (cipherList && !useDefCipherList) {
         if (wolfSSL_CTX_set_cipher_list(ctx, cipherList) != WOLFSSL_SUCCESS) {
@@ -3940,6 +4018,15 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     ((func_args*)args)->return_code = 0;
 
 exit:
+
+#ifdef WOLFSSL_WOLFSENTRY_HOOKS
+    wolfsentry_ret = wolfsentry_shutdown(&wolfsentry);
+    if (wolfsentry_ret < 0) {
+        fprintf(stderr,
+                "wolfsentry_shutdown() returned " WOLFSENTRY_ERROR_FMT "\n",
+                WOLFSENTRY_ERROR_FMT_ARGS(wolfsentry_ret));
+    }
+#endif
 
 #ifdef WOLFSSL_ASYNC_CRYPT
     wolfAsync_DevClose(&devId);
