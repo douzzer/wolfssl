@@ -20,7 +20,11 @@
  */
 
 #ifndef WOLFSSL_LICENSE
+#ifdef WOLFSSL_COMMERCIAL_LICENSE
+#define WOLFSSL_LICENSE "wolfSSL Commercial"
+#else
 #define WOLFSSL_LICENSE "GPL v2"
+#endif
 #endif
 
 #define FIPS_NO_WRAPPERS
@@ -442,13 +446,14 @@ static int set_up_wolfssl_linuxkm_pie_redirect_table(void) {
     #endif
     wolfssl_linuxkm_pie_redirect_table.nr_cpu_ids = &nr_cpu_ids;
 
-    #if defined(CONFIG_SMP) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+    #if defined(CONFIG_SMP) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)) && !defined(WOLFSSL_COMMERCIAL_LICENSE)
         wolfssl_linuxkm_pie_redirect_table.migrate_disable = &migrate_disable;
         wolfssl_linuxkm_pie_redirect_table.migrate_enable = &migrate_enable;
     #endif
 
 #ifdef WOLFSSL_LINUXKM_SIMD_X86
     wolfssl_linuxkm_pie_redirect_table.irq_fpu_usable = irq_fpu_usable;
+    #if !defined(WOLFSSL_COMMERCIAL_LICENSE)
     #ifdef kernel_fpu_begin
     wolfssl_linuxkm_pie_redirect_table.kernel_fpu_begin_mask =
         kernel_fpu_begin_mask;
@@ -457,6 +462,7 @@ static int set_up_wolfssl_linuxkm_pie_redirect_table(void) {
         kernel_fpu_begin;
     #endif
     wolfssl_linuxkm_pie_redirect_table.kernel_fpu_end = kernel_fpu_end;
+    #endif /* !defined(WOLFSSL_COMMERCIAL_LICENSE) */
 #endif /* WOLFSSL_LINUXKM_SIMD_X86 */
 
 #endif /* WOLFSSL_LINUXKM_USE_SAVE_VECTOR_REGISTERS */
