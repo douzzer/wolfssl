@@ -507,6 +507,18 @@ static int linuxkm_test_ ## name(void) {                                   \
                                                                            \
 struct wc_swallow_the_semicolon
 
+#ifdef USE_INTEL_SPEEDUP
+    /* sha3_block_n_bmi2() disrupts %rbp (the frame pointer), which provokes KASAN
+     * if it gets interrupted.  Work around it by repurposing
+     * SAVE_VECTOR_REGISTERS2() to disable preemption.
+     */
+     #define SHA3_RBP_WORKAROUND_BEGIN() do { int svr_ret = SAVE_VECTOR_REGISTERS2()
+     #define SHA3_RBP_WORKAROUND_END() if (svr_ret == 0) { RESTORE_VECTOR_REGISTERS(); } } while (0)
+#else
+     #define SHA3_RBP_WORKAROUND_BEGIN() WC_DO_NOTHING
+     #define SHA3_RBP_WORKAROUND_END() WC_DO_NOTHING
+#endif
+
 #define WC_LINUXKM_SHA3_IMPLEMENT(name, digest_size, block_size,           \
                                   this_cra_name, this_cra_driver_name,     \
                                   init_f, update_f, final_f,               \
@@ -531,8 +543,10 @@ static int km_ ## name ## _update(struct shash_desc *desc, const u8 *data, \
                                   unsigned int len)                        \
 {                                                                          \
     struct km_sha_state *ctx = (struct km_sha_state *)shash_desc_ctx(desc);\
-                                                                           \
-    int ret = update_f(ctx-> name ## _state, data, len);                   \
+    int ret;                                                               \
+    SHA3_RBP_WORKAROUND_BEGIN();                                           \
+    ret = update_f(ctx-> name ## _state, data, len);                       \
+    SHA3_RBP_WORKAROUND_END();                                             \
                                                                            \
     if (ret == 0)                                                          \
         return 0;                                                          \
@@ -558,8 +572,10 @@ static int km_ ## name ## _finup(struct shash_desc *desc, const u8 *data,  \
                                  unsigned int len, u8 *out)                \
 {                                                                          \
     struct km_sha_state *ctx = (struct km_sha_state *)shash_desc_ctx(desc);\
-                                                                           \
-    int ret = update_f(ctx-> name ## _state, data, len);                   \
+    int ret;                                                               \
+    SHA3_RBP_WORKAROUND_BEGIN();                                           \
+    ret = update_f(ctx-> name ## _state, data, len);                       \
+    SHA3_RBP_WORKAROUND_END();                                             \
                                                                            \
     if (ret != 0)                                                          \
         return -EINVAL;                                                    \
@@ -738,8 +754,10 @@ WC_MAYBE_UNUSED static int km_hmac_update(struct shash_desc *desc, const u8 *dat
                           unsigned int len)
 {
     struct km_sha_hmac_state *ctx = (struct km_sha_hmac_state *)shash_desc_ctx(desc);
-
-    int ret = wc_HmacUpdate(ctx->wc_hmac, data, len);
+    int ret;
+    SHA3_RBP_WORKAROUND_BEGIN();
+    ret = wc_HmacUpdate(ctx->wc_hmac, data, len);
+    SHA3_RBP_WORKAROUND_END();
 
     if (ret == 0)
         return 0;
@@ -766,8 +784,10 @@ WC_MAYBE_UNUSED static int km_hmac_finup(struct shash_desc *desc, const u8 *data
                       unsigned int len, u8 *out)
 {
     struct km_sha_hmac_state *ctx = (struct km_sha_hmac_state *)shash_desc_ctx(desc);
-
-    int ret = wc_HmacUpdate(ctx->wc_hmac, data, len);
+    int ret;
+    SHA3_RBP_WORKAROUND_BEGIN();
+    ret = wc_HmacUpdate(ctx->wc_hmac, data, len);
+    SHA3_RBP_WORKAROUND_END();
 
     if (ret != 0)
         return -EINVAL;
