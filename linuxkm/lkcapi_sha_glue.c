@@ -1092,14 +1092,14 @@ static inline struct wc_rng_inst *get_drbg(struct crypto_rng *tfm) {
  * caller can't sleep and the requested DRBG is busy, it returns immediately --
  * this avoids priority inversions and deadlocks.
  */
-static inline struct wc_rng_inst *get_drbg_n(struct wc_linuxkm_drbg_ctx *ctx, int n) {
+static inline struct wc_rng_inst *get_drbg_n(struct wc_linuxkm_drbg_ctx *ctx, int n, int can_spin) {
     int can_sleep = (preempt_count() == 0);
 
     for (;;) {
         int expected = 0;
         if (likely(__atomic_compare_exchange_n(&ctx->rngs[n].lock, &expected, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE)))
             return &ctx->rngs[n];
-        if (can_sleep) {
+        if (can_sleep && can_spin) {
             if (signal_pending(current))
                 return NULL;
             cond_resched();
@@ -1226,7 +1226,7 @@ static int wc_linuxkm_drbg_seed(struct crypto_rng *tfm,
      * up, to assure they can't possibly phase-lock to each other.
      */
     for (n = ctx->n_rngs - 1; n >= 0; --n) {
-        struct wc_rng_inst *drbg = get_drbg_n(ctx, n);
+        struct wc_rng_inst *drbg = get_drbg_n(ctx, n, 1);
 
         if (! drbg) {
             ret = -EINTR;
@@ -1483,7 +1483,7 @@ static int wc_mix_pool_bytes(const void *buf, size_t len) {
         return -EFAULT;
 
     for (n = ctx->n_rngs - 1; n >= 0; --n) {
-        struct wc_rng_inst *drbg = get_drbg_n(ctx, n);
+        struct wc_rng_inst *drbg = get_drbg_n(ctx, n, 0);
         int V_offset;
 
         if (! drbg)
@@ -1515,7 +1515,7 @@ static int wc_crng_reseed(void) {
         return -EFAULT;
 
     for (n = ctx->n_rngs - 1; n >= 0; --n) {
-        struct wc_rng_inst *drbg = get_drbg_n(ctx, n);
+        struct wc_rng_inst *drbg = get_drbg_n(ctx, n, 1);
 
         if (! drbg)
             return -EINTR;
