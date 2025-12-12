@@ -777,10 +777,6 @@ WC_MAYBE_UNUSED static int km_hmac_init(struct shash_desc *desc) {
 
     XMEMCPY(t_ctx->wc_hmac, &p_ctx->wc_hmac, sizeof *t_ctx->wc_hmac);
 
-#ifndef WC_SHA2_INLINE_WORKBUFS
-    #error LKCAPI requires WC_SHA2_INLINE_WORKBUFS.
-#endif
-
     return 0;
 }
 
@@ -1300,6 +1296,14 @@ static int wc_linuxkm_drbg_loaded = 0;
 #endif
 
 #ifdef LINUXKM_DRBG_GET_RANDOM_BYTES
+
+#ifndef WOLFSSL_SMALL_STACK_CACHE
+    /* WOLFSSL_SMALL_STACK_CACHE eliminates post-init heap allocations in SHA-2
+     * and the Hash DRBG, fixing circular call dependencies between
+     * get_random_u32() from kernel heap and wolfCrypt DRBG.
+     */
+    #error LINUXKM_DRBG_GET_RANDOM_BYTES requires WOLFSSL_SMALL_STACK_CACHE.
+#endif
 
 #if !(defined(HAVE_ENTROPY_MEMUSE) || defined(HAVE_INTEL_RDSEED) ||    \
       defined(HAVE_AMD_RDSEED) || defined(WC_LINUXKM_RDSEED_IN_GLUE_LAYER))
