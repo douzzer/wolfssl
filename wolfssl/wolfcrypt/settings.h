@@ -3832,6 +3832,9 @@ extern void uITRON4_free(void *p) ;
     #if defined(__aarch64__) && !defined(WOLFSSL_AARCH64_PRIVILEGE_MODE)
         #define WOLFSSL_AARCH64_PRIVILEGE_MODE
     #endif
+    #ifndef WC_SHA2_INLINE_WORKBUFS
+        #define WC_SHA2_INLINE_WORKBUFS
+    #endif
 #endif
 
 /* FreeBSD Kernel Module */
@@ -3934,6 +3937,10 @@ extern void uITRON4_free(void *p) ;
 
     #undef  WOLFSSL_HAVE_MAX
     #define WOLFSSL_HAVE_MAX
+
+    #ifndef WC_SHA2_INLINE_WORKBUFS
+        #define WC_SHA2_INLINE_WORKBUFS
+    #endif
 #endif
 
 #if defined(WC_SYM_RELOC_TABLES) && defined(HAVE_FIPS) && \

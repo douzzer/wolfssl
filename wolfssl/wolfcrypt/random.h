@@ -177,6 +177,8 @@ struct DRBG_internal {
 #endif
 #ifdef WOLFSSL_SMALL_STACK_CACHE
     wc_Sha256 sha256;
+    byte seed_scratch[DRBG_SEED_LEN];
+    byte digest_scratch[WC_SHA256_DIGEST_SIZE];
 #endif
 };
 #endif
@@ -191,8 +193,12 @@ struct WC_RNG {
 #if defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_STATIC_MEMORY)
     struct DRBG_internal drbg_data;
 #endif
-    byte status;
+#ifdef WOLFSSL_SMALL_STACK_CACHE
+    struct DRBG_internal *drbg_scratch;
+    byte *health_check_scratch;
 #endif
+    byte status;
+#endif /* HAVE_HASHDRBG */
 #if defined(HAVE_GETPID) && !defined(WOLFSSL_NO_GETPID)
     pid_t pid;
 #endif

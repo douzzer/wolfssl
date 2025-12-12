@@ -31,7 +31,6 @@
 
 #if defined(WOLFSSL_SHA512) || defined(WOLFSSL_SHA384)
 
-
 #if FIPS_VERSION3_GE(2,0,0)
     #include <wolfssl/wolfcrypt/fips.h>
 #endif /* HAVE_FIPS_VERSION >= 2 */
@@ -167,7 +166,10 @@ struct wc_Sha512 {
 #ifdef WOLFSSL_ASYNC_CRYPT
     WC_ASYNC_DEV asyncDev;
 #endif /* WOLFSSL_ASYNC_CRYPT */
-#ifdef WOLFSSL_SMALL_STACK_CACHE
+#if defined(WC_SHA2_INLINE_WORKBUFS)
+    word64 W[16];
+    word64 X[WC_SHA512_BLOCK_SIZE / sizeof(word64)];
+#elif defined(WOLFSSL_SMALL_STACK_CACHE)
     word64* W;
 #endif
 

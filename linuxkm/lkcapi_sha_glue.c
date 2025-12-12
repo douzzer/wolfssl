@@ -176,7 +176,8 @@
     #define LINUXKM_LKCAPI_DONT_REGISTER_SHA3_512_HMAC
 #endif
 
-#if defined(NO_HMAC) && defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_HMAC)
+#if defined(NO_HMAC) && defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_HMAC) && \
+    !defined(LINUXKM_LKCAPI_DONT_REGISTER_HMAC_ALL)
     #error Config conflict: target kernel has CONFIG_CRYPTO_HMAC, but module has NO_HMAC
 #endif
 
@@ -196,7 +197,8 @@
         #define LINUXKM_LKCAPI_REGISTER_SHA1_HMAC
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA1)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA1) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA1)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA1, but module has NO_SHA
     #endif
 
@@ -220,7 +222,8 @@
         #define LINUXKM_LKCAPI_REGISTER_SHA2_224_HMAC
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA256)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA256) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA2_224)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA256, but module is missing WOLFSSL_SHA224
     #endif
 
@@ -244,7 +247,8 @@
         #define LINUXKM_LKCAPI_REGISTER_SHA2_256_HMAC
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA256)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA256) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA2_256)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA256, but module has NO_SHA256
     #endif
 
@@ -268,7 +272,8 @@
         #define LINUXKM_LKCAPI_REGISTER_SHA2_384_HMAC
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA512)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA512) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA2_384)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA512, but module is missing WOLFSSL_SHA384
     #endif
 
@@ -292,7 +297,8 @@
         #define LINUXKM_LKCAPI_REGISTER_SHA2_512_HMAC
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA512)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA512) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA2_512)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA512, but module is missing WOLFSSL_SHA512
     #endif
 
@@ -345,7 +351,8 @@
         #endif
     #endif
 #else
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA3)
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_SHA3) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_SHA3)
         #error Config conflict: target kernel has CONFIG_CRYPTO_SHA3, but module is missing WOLFSSL_SHA3
     #endif
 
@@ -379,6 +386,10 @@
     #endif
     /* setup for LINUXKM_LKCAPI_REGISTER_HASH_DRBG_DEFAULT is in linuxkm_wc_port.h */
 #else
+    #if defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_DRBG) && \
+        !defined(LINUXKM_LKCAPI_DONT_REGISTER_HASH_DRBG)
+        #error Config conflict: target kernel has CONFIG_CRYPTO_SHA3, but module is missing WOLFSSL_SHA3
+    #endif
     #undef LINUXKM_LKCAPI_REGISTER_HASH_DRBG
 #endif
 
@@ -766,32 +777,9 @@ WC_MAYBE_UNUSED static int km_hmac_init(struct shash_desc *desc) {
 
     XMEMCPY(t_ctx->wc_hmac, &p_ctx->wc_hmac, sizeof *t_ctx->wc_hmac);
 
-#ifdef WOLFSSL_SMALL_STACK_CACHE
-    /* The cached W buffer from the persistent ctx can't be used because it
-     * would be double-freed, first by km_hmac_free_tstate(), then by
-     * km_hmac_exit_tfm().
-     */
-    switch (t_ctx->wc_hmac->macType) {
-
-    #ifndef NO_SHA256
-        case WC_SHA256:
-    #ifdef WOLFSSL_SHA224
-        case WC_SHA224:
-    #endif
-            t_ctx->wc_hmac->hash.sha256.W = NULL;
-            break;
-    #endif /* WOLFSSL_SHA256 */
-
-    #ifdef WOLFSSL_SHA512
-        case WC_SHA512:
-    #ifdef WOLFSSL_SHA384
-        case WC_SHA384:
-    #endif
-            t_ctx->wc_hmac->hash.sha512.W = NULL;
-            break;
-    #endif /* WOLFSSL_SHA512 */
-    }
-#endif /* WOLFSSL_SMALL_STACK_CACHE */
+#ifndef WC_SHA2_INLINE_WORKBUFS
+    #error LKCAPI requires WC_SHA2_INLINE_WORKBUFS.
+#endif
 
     return 0;
 }
