@@ -454,8 +454,12 @@ static int Hash_DRBG_Reseed(DRBG_internal* drbg, const byte* seed, word32 seedSz
         return DRBG_FAILURE;
     }
 
+#ifdef WOLFSSL_SMALL_STACK_CACHE
+    newV = drbg->seed_scratch;
+#else
     WC_ALLOC_VAR_EX(newV, byte, DRBG_SEED_LEN, drbg->heap,
         DYNAMIC_TYPE_TMP_BUFFER, return MEMORY_E);
+#endif
     XMEMSET(newV, 0, DRBG_SEED_LEN);
 
     ret = Hash_df(drbg, newV, DRBG_SEED_LEN, drbgReseed,
@@ -471,7 +475,9 @@ static int Hash_DRBG_Reseed(DRBG_internal* drbg, const byte* seed, word32 seedSz
         drbg->reseedCtr = 1;
     }
 
+#ifndef WOLFSSL_SMALL_STACK_CACHE
     WC_FREE_VAR_EX(newV, drbg->heap, DYNAMIC_TYPE_TMP_BUFFER);
+#endif
     return ret;
 }
 
