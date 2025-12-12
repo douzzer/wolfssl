@@ -5271,11 +5271,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha512_224_test(void)
     ret = wc_InitSha512_224_ex(&sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-    ret = wc_InitSha512_224_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha512_224Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
+    XMEMSET(&shaCopy, 0, sizeof(shaCopy));
 
     for (i = 0; i < times; ++i) {
         ret = wc_Sha512_224Update(&sha, (byte*)test_sha[i].input,
@@ -5424,11 +5420,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha512_256_test(void)
     ret = wc_InitSha512_256_ex(&sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-    ret = wc_InitSha512_256_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha512_256Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
+    XMEMSET(&shaCopy, 0, sizeof(shaCopy));
 
     for (i = 0; i < times; ++i) {
         ret = wc_Sha512_256Update(&sha, (byte*)test_sha[i].input,
