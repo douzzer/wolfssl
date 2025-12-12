@@ -194,6 +194,7 @@ struct WC_RNG {
     struct DRBG_internal drbg_data;
 #endif
 #ifdef WOLFSSL_SMALL_STACK_CACHE
+    /* Scratch buffer slots -- everything is preallocated by _InitRng(). */
     struct DRBG_internal *drbg_scratch;
     byte *health_check_scratch;
 #endif

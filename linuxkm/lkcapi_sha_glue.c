@@ -1483,7 +1483,7 @@ static int wc_mix_pool_bytes(const void *buf, size_t len) {
         int V_offset;
 
         if (! drbg)
-            return -EINTR;
+            continue;
 
         for (i = 0, V_offset = 0; i < len; ++i) {
             ((struct DRBG_internal *)drbg->rng.drbg)->V[V_offset++] += ((byte *)buf)[i];
