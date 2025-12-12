@@ -4734,11 +4734,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha224_test(void)
     ret = wc_InitSha224_ex(&sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-    ret = wc_InitSha224_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha224Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
 
     for (i = 0; i < times; ++i) {
         ret = wc_Sha224Update(&sha, (byte*)test_sha[i].input,
@@ -4844,20 +4839,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha256_test(void)
     ret = wc_InitSha256_ex(&i_sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#endif
-
-    ret = wc_InitSha256_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha256Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
-#ifndef NO_WOLFSSL_SHA256_INTERLEAVE
-    ret = wc_InitSha256_ex(&i_shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha256Free(&sha);
-        wc_Sha256Free(&i_sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
 #endif
 
     for (i = 0; i < times; ++i) {
@@ -5083,20 +5064,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha512_test(void)
     ret = wc_InitSha512_ex(&i_sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#endif
-
-    ret = wc_InitSha512_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha512Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
-#ifndef NO_WOLFSSL_SHA512_INTERLEAVE
-    ret = wc_InitSha512_ex(&i_shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha512Free(&sha);
-        wc_Sha512Free(&i_sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
 #endif
 
     for (i = 0; i < times; ++i) {
@@ -5586,11 +5553,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha384_test(void)
     ret = wc_InitSha384_ex(&sha, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-    ret = wc_InitSha384_ex(&shaCopy, HEAP_HINT, devId);
-    if (ret != 0) {
-        wc_Sha384Free(&sha);
-        return WC_TEST_RET_ENC_EC(ret);
-    }
 
     for (i = 0; i < times; ++i) {
         ret = wc_Sha384Update(&sha, (byte*)test_sha[i].input,
@@ -7149,17 +7111,20 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t hash_test(void)
        if (ret != 0) {
            ERROR_OUT(WC_TEST_RET_ENC_EC(BAD_FUNC_ARG), out);
        }
-#endif
+#else
         ret = wc_HashInit(hash, typesGood[i]);
         if (ret != exp_ret)
             ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
+#endif
         ret = wc_HashUpdate(hash, typesGood[i], data, sizeof(data));
         if (ret != exp_ret)
             ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
         ret = wc_HashFinal(hash, typesGood[i], out);
         if (ret != exp_ret)
             ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
-        wc_HashFree(hash, typesGood[i]);
+        ret = wc_HashFree(hash, typesGood[i]);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
 
         digestSz = wc_HashGetDigestSize(typesGood[i]);
         if (exp_ret == 0 && digestSz < 0)
