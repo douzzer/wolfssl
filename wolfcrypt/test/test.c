@@ -5070,6 +5070,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t sha512_test(void)
 #endif
 
     XMEMSET(&shaCopy, 0, sizeof(shaCopy));
+#ifndef NO_WOLFSSL_SHA512_INTERLEAVE
+    XMEMSET(&i_shaCopy, 0, sizeof(i_shaCopy));
+#endif
 
     for (i = 0; i < times; ++i) {
         ret = wc_Sha512Update(&sha, (byte*)test_sha[i].input,
