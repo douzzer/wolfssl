@@ -896,7 +896,7 @@ static int InitSha512_Family(wc_Sha512* sha512, void* heap, int devId,
 
 
     sha512->heap = heap;
-#if defined(WOLFSSL_SMALL_STACK_CACHE) && !defined(WOLFSSL_KERNEL_MODE)
+#ifdef WOLFSSL_SMALL_STACK_CACHE
     sha512->W = NULL;
 #endif
 #ifdef WOLF_CRYPTO_CB
