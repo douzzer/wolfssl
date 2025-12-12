@@ -768,6 +768,7 @@ WC_MAYBE_UNUSED static void km_hmac_exit_tfm(struct crypto_shash *tfm)
 }
 
 WC_MAYBE_UNUSED static int km_hmac_init(struct shash_desc *desc) {
+    int ret;
     struct km_sha_hmac_state *t_ctx = (struct km_sha_hmac_state *)shash_desc_ctx(desc);
     struct km_sha_hmac_pstate *p_ctx = (struct km_sha_hmac_pstate *)crypto_shash_ctx(desc->tfm);
 
@@ -775,7 +776,12 @@ WC_MAYBE_UNUSED static int km_hmac_init(struct shash_desc *desc) {
     if (! t_ctx->wc_hmac)
         return -ENOMEM;
 
-    XMEMCPY(t_ctx->wc_hmac, &p_ctx->wc_hmac, sizeof *t_ctx->wc_hmac);
+    ret = wc_HmacCopy(&p_ctx->wc_hmac, t_ctx->wc_hmac);
+    if (ret != 0) {
+        free(t_ctx->wc_hmac);
+        t_ctx->wc_hmac = NULL;
+        return -EINVAL;
+    }
 
     return 0;
 }
