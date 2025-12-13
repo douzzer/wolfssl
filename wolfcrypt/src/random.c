@@ -1135,6 +1135,7 @@ static int PollAndReSeed(WC_RNG* rng)
     if (wc_RNG_HealthTestLocal(rng, 1, rng->heap, devId) == 0) {
     #if defined(WOLFSSL_SMALL_STACK_CACHE)
         byte* newSeed = ((DRBG_internal *)rng->drbg)->seed_scratch;
+        ret = DRBG_SUCCESS;
     #elif defined(WOLFSSL_SMALL_STACK)
         byte* newSeed = (byte*)XMALLOC(SEED_SZ + SEED_BLOCK_SZ, rng->heap,
             DYNAMIC_TYPE_SEED);
