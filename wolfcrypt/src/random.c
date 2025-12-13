@@ -364,7 +364,9 @@ static int Hash_df(DRBG_internal* drbg, byte* out, word32 outSz, byte type,
 #else
     wc_Sha256 sha[1];
 #endif
-#ifdef WOLFSSL_SMALL_STACK
+#if defined(WOLFSSL_SMALL_STACK_CACHE)
+    byte* digest = drbg->digest_scratch;
+#elif defined(WOLFSSL_SMALL_STACK)
     byte* digest;
 #else
     byte digest[WC_SHA256_DIGEST_SIZE];
@@ -374,9 +376,7 @@ static int Hash_df(DRBG_internal* drbg, byte* out, word32 outSz, byte type,
         return DRBG_FAILURE;
     }
 
-#if defined(WOLFSSL_SMALL_STACK_CACHE)
-    digest = drbg->digest_scratch;
-#elif defined(WOLFSSL_SMALL_STACK)
+#if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_SMALL_STACK_CACHE)
     digest = (byte*)XMALLOC(WC_SHA256_DIGEST_SIZE, drbg->heap,
         DYNAMIC_TYPE_DIGEST);
     if (digest == NULL)
@@ -906,6 +906,21 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
 
     #ifdef WOLFSSL_SMALL_STACK_CACHE
     if (ret == 0) {
+        rng->drbg_scratch =
+            (DRBG_internal *)XMALLOC(sizeof(DRBG_internal), rng->heap,
+                                     DYNAMIC_TYPE_RNG);
+        if (rng->drbg_scratch == NULL) {
+#if defined(DEBUG_WOLFSSL)
+            WOLFSSL_MSG_EX("_InitRng XMALLOC failed to allocate %d bytes",
+                           sizeof(DRBG_internal));
+#endif
+            ret = MEMORY_E;
+            rng->status = DRBG_FAILED;
+        }
+        XMEMSET(rng->drbg_scratch, 0, sizeof(*rng->drbg_scratch));
+    }
+
+    if (ret == 0) {
         rng->health_check_scratch =
             (byte *)XMALLOC(RNG_HEALTH_TEST_CHECK_SIZE, rng->heap,
                             DYNAMIC_TYPE_TMP_BUFFER);
@@ -914,7 +929,7 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
             rng->status = DRBG_FAILED;
         }
     }
-    #endif
+    #endif /* WOLFSSL_SMALL_STACK_CACHE */
 
     if (ret == 0) {
         ret = wc_RNG_HealthTestLocal(rng, 0, rng->heap, devId);
@@ -927,9 +942,7 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
     }
 
     if (ret == 0) {
-    #ifdef WOLFSSL_SMALL_STACK_CACHE
-        seed = ((DRBG_internal *)rng->drbg)->seed_scratch;
-    #elif defined(WOLFSSL_SMALL_STACK)
+    #ifdef WOLFSSL_SMALL_STACK
         seed = (byte*)XMALLOC(MAX_SEED_SZ, rng->heap,
                               DYNAMIC_TYPE_SEED);
         if (seed == NULL) {
@@ -938,24 +951,6 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
         }
     #endif
     }
-
-    #ifdef WOLFSSL_SMALL_STACK_CACHE
-    if (ret == 0) {
-        rng->drbg_scratch =
-            (DRBG_internal *)XMALLOC(sizeof(DRBG_internal), rng->heap,
-                                     DYNAMIC_TYPE_RNG);
-        if (rng->drbg_scratch == NULL) {
-#if defined(DEBUG_WOLFSSL)
-            WOLFSSL_MSG_EX("_InitRng XMALLOC failed to allocate %d bytes",
-                           sizeof(DRBG_internal));
-#endif
-            ret = MEMORY_E;
-            rng->status = DRBG_FAILED;
-        }
-    }
-    if (ret == 0)
-        seed = ((DRBG_internal *)rng->drbg)->seed_scratch;
-    #endif
 
     if (ret != 0) {
 #if defined(DEBUG_WOLFSSL)
@@ -997,15 +992,13 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
                             nonce, nonceSz, rng->heap, devId);
     } /* ret == 0 */
 
-    #if defined(WOLFSSL_SMALL_STACK) || defined(WOLFSSL_SMALL_STACK_CACHE)
+    #ifdef WOLFSSL_SMALL_STACK
     if (seed)
     #endif
     {
         ForceZero(seed, seedSz);
     }
-    #ifndef WOLFSSL_SMALL_STACK_CACHE
     WC_FREE_VAR_EX(seed, rng->heap, DYNAMIC_TYPE_SEED);
-    #endif
 
     if (ret != DRBG_SUCCESS) {
     #ifdef WOLFSSL_SMALL_STACK_CACHE
@@ -1496,15 +1489,26 @@ const FLASH_QUALIFIER byte outputB_data[] = {
 static int wc_RNG_HealthTestLocal(WC_RNG* rng, int reseed, void* heap,
                                   int devId)
 {
-    DRBG_internal* drbg = (DRBG_internal *)rng->drbg;
     int ret = 0;
 #ifdef WOLFSSL_SMALL_STACK_CACHE
     byte *check = rng->health_check_scratch;
+    DRBG_internal* drbg = (DRBG_internal *)rng->drbg_scratch;
 #else
     WC_DECLARE_VAR(check, byte, RNG_HEALTH_TEST_CHECK_SIZE, 0);
+    WC_DECLARE_VAR(drbg, DRBG_internal, 1, 0);
+
+    (void)rng;
 
     WC_ALLOC_VAR_EX(check, byte, RNG_HEALTH_TEST_CHECK_SIZE, heap,
         DYNAMIC_TYPE_TMP_BUFFER, return MEMORY_E);
+    WC_ALLOC_VAR_EX(drbg, DRBG_internal, sizeof(DRBG_internal), heap,
+        DYNAMIC_TYPE_TMP_BUFFER, WC_DO_NOTHING);
+    #ifdef WC_DECLARE_VAR_IS_HEAP_ALLOC
+    if (drbg == NULL) {
+        WC_FREE_VAR_EX(check, heap, DYNAMIC_TYPE_TMP_BUFFER);
+        return MEMORY_E;
+    }
+    #endif
 #endif
 
     if (reseed) {
@@ -1621,6 +1625,7 @@ static int wc_RNG_HealthTestLocal(WC_RNG* rng, int reseed, void* heap,
 
 #ifndef WOLFSSL_SMALL_STACK_CACHE
     WC_FREE_VAR_EX(check, heap, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(drbg, heap, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
 
     return ret;
