@@ -286,15 +286,6 @@ static int InitSha512(wc_Sha512* sha512)
     if (sha512 == NULL)
         return BAD_FUNC_ARG;
 
-#ifdef WOLFSSL_SMALL_STACK_CACHE
-    if (sha512->W == NULL) {
-        sha512->W = (word64 *)XMALLOC((sizeof(word64) * 16) + WC_SHA512_BLOCK_SIZE,
-                                      sha512->heap, DYNAMIC_TYPE_DIGEST);
-        if (sha512->W == NULL)
-            return MEMORY_E;
-    }
-#endif
-
     sha512->digest[0] = W64LIT(0x6a09e667f3bcc908);
     sha512->digest[1] = W64LIT(0xbb67ae8584caa73b);
     sha512->digest[2] = W64LIT(0x3c6ef372fe94f82b);
@@ -349,15 +340,6 @@ static int InitSha512_224(wc_Sha512* sha512)
 {
     if (sha512 == NULL)
         return BAD_FUNC_ARG;
-
-#ifdef WOLFSSL_SMALL_STACK_CACHE
-    if (sha512->W == NULL) {
-        sha512->W = (word64 *)XMALLOC((sizeof(word64) * 16) + WC_SHA512_BLOCK_SIZE,
-                                      sha512->heap, DYNAMIC_TYPE_DIGEST);
-        if (sha512->W == NULL)
-            return MEMORY_E;
-    }
-#endif
 
     sha512->digest[0] = W64LIT(0x8c3d37c819544da2);
     sha512->digest[1] = W64LIT(0x73e1996689dcd4d6);
@@ -415,15 +397,6 @@ static int InitSha512_256(wc_Sha512* sha512)
 {
     if (sha512 == NULL)
         return BAD_FUNC_ARG;
-
-#ifdef WOLFSSL_SMALL_STACK_CACHE
-    if (sha512->W == NULL) {
-        sha512->W = (word64 *)XMALLOC((sizeof(word64) * 16) + WC_SHA512_BLOCK_SIZE,
-                                      sha512->heap, DYNAMIC_TYPE_DIGEST);
-        if (sha512->W == NULL)
-            return MEMORY_E;
-    }
-#endif
 
     sha512->digest[0] = W64LIT(0x22312194fc2bf72c);
     sha512->digest[1] = W64LIT(0x9f555fa3c84c64c2);
@@ -897,7 +870,10 @@ static int InitSha512_Family(wc_Sha512* sha512, void* heap, int devId,
 
     sha512->heap = heap;
 #ifdef WOLFSSL_SMALL_STACK_CACHE
-    sha512->W = NULL;
+    sha512->W = (word64 *)XMALLOC((sizeof(word64) * 16) + WC_SHA512_BLOCK_SIZE,
+                                  sha512->heap, DYNAMIC_TYPE_DIGEST);
+    if (sha512->W == NULL)
+        return MEMORY_E;
 #endif
 #ifdef WOLF_CRYPTO_CB
     sha512->devId = devId;
