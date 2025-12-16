@@ -19636,6 +19636,47 @@ static wc_test_ret_t rng_seed_test(void)
     byte output[WC_SHA256_DIGEST_SIZE];
     WC_RNG rng;
     wc_test_ret_t ret;
+#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
+    long current_totalAllocs;
+#endif
+
+    /* First, force reseed using the default/installed seed generator. */
+
+    ret = wc_InitRng(&rng);
+    if (ret != 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    }
+
+#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
+    current_totalAllocs = wc_MemStats_Ptr->totalAllocs;
+#endif
+
+    ret = wc_RNG_GenerateBlock(&rng, output, sizeof(output));
+    if (ret != 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    }
+
+    ((struct DRBG_internal *)rng.drbg)->reseedCtr = WC_RESEED_INTERVAL;
+
+    ret = wc_RNG_GenerateBlock(&rng, output, sizeof(output));
+    if (ret != 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    }
+
+    if (((struct DRBG_internal *)rng.drbg)->reseedCtr == WC_RESEED_INTERVAL) {
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    }
+
+#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
+    if (current_totalAllocs != wc_MemStats_Ptr->totalAllocs) {
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    }
+#endif
+
+    ret = wc_FreeRng(&rng);
+    if (ret != 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    }
 
     ret = wc_SetSeed_Cb(seed_cb);
     if (ret != 0) {
@@ -27913,6 +27954,12 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openSSL_evpMD_test(void)
         goto openSSL_evpMD_test_done;
     }
 
+    ret = wolfSSL_EVP_MD_CTX_cleanup(ctx);
+    if (ret != WOLFSSL_SUCCESS) {
+        ret = WC_TEST_RET_ENC_NC;
+        goto openSSL_evpMD_test_done;
+    }
+
     ret = wolfSSL_EVP_DigestInit(ctx, wolfSSL_EVP_sha1());
     if (ret != WOLFSSL_SUCCESS) {
         ret = WC_TEST_RET_ENC_NC;
@@ -27940,6 +27987,12 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openSSL_evpMD_test(void)
         goto openSSL_evpMD_test_done;
     }
 
+    ret = wolfSSL_EVP_MD_CTX_cleanup(ctx);
+    if (ret != WOLFSSL_SUCCESS) {
+        ret = WC_TEST_RET_ENC_NC;
+        goto openSSL_evpMD_test_done;
+    }
+
     if (wolfSSL_EVP_DigestInit_ex(ctx, wolfSSL_EVP_sha1(), NULL) != WOLFSSL_SUCCESS) {
         ret = WC_TEST_RET_ENC_NC;
         goto openSSL_evpMD_test_done;
@@ -27951,6 +28004,12 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openSSL_evpMD_test(void)
     }
 
     if (wolfSSL_EVP_add_cipher(NULL) != 0) {
+        ret = WC_TEST_RET_ENC_NC;
+        goto openSSL_evpMD_test_done;
+    }
+
+    ret = wolfSSL_EVP_MD_CTX_cleanup(ctx);
+    if (ret != WOLFSSL_SUCCESS) {
         ret = WC_TEST_RET_ENC_NC;
         goto openSSL_evpMD_test_done;
     }

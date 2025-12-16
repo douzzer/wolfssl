@@ -197,6 +197,7 @@ struct WC_RNG {
     /* Scratch buffer slots -- everything is preallocated by _InitRng(). */
     struct DRBG_internal *drbg_scratch;
     byte *health_check_scratch;
+    byte *newSeed_buf;
 #endif
     byte status;
 #endif /* HAVE_HASHDRBG */
