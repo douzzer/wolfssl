@@ -19419,6 +19419,9 @@ static wc_test_ret_t _rng_test(WC_RNG* rng)
     byte block[32];
     wc_test_ret_t ret;
     int i;
+#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
+    long current_totalAllocs = wc_MemStats_Ptr->totalAllocs;
+#endif
 
     XMEMSET(block, 0, sizeof(block));
 
@@ -19442,6 +19445,28 @@ static wc_test_ret_t _rng_test(WC_RNG* rng)
     if (ret != 0) {
         return WC_TEST_RET_ENC_EC(ret);
     }
+
+#if defined(HAVE_HASHDRBG) && !defined(CUSTOM_RAND_GENERATE_BLOCK)
+    /* Test periodic reseed dynamics. */
+
+    ((struct DRBG_internal *)rng->drbg)->reseedCtr = WC_RESEED_INTERVAL;
+
+    ret = wc_RNG_GenerateBlock(rng, block, sizeof(block));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+
+    if (((struct DRBG_internal *)rng->drbg)->reseedCtr == WC_RESEED_INTERVAL)
+        return WC_TEST_RET_ENC_NC;
+#endif /* HAVE_HASHDRBG && !CUSTOM_RAND_GENERATE_BLOCK */
+
+#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
+    /* wc_RNG_GenerateBlock() must not allocate any memory in
+     * WOLFSSL_SMALL_STACK_CACHE builds, even if it had to reseed.
+     * Check that it didn't.
+     */
+    if (current_totalAllocs != wc_MemStats_Ptr->totalAllocs)
+        return WC_TEST_RET_ENC_NC;
+#endif
 
     /* Parameter validation testing. */
     ret = wc_RNG_GenerateBlock(NULL, block, sizeof(block));
@@ -19636,47 +19661,6 @@ static wc_test_ret_t rng_seed_test(void)
     byte output[WC_SHA256_DIGEST_SIZE];
     WC_RNG rng;
     wc_test_ret_t ret;
-#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
-    long current_totalAllocs;
-#endif
-
-    /* First, force reseed using the default/installed seed generator. */
-
-    ret = wc_InitRng(&rng);
-    if (ret != 0) {
-        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-    }
-
-#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
-    current_totalAllocs = wc_MemStats_Ptr->totalAllocs;
-#endif
-
-    ret = wc_RNG_GenerateBlock(&rng, output, sizeof(output));
-    if (ret != 0) {
-        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-    }
-
-    ((struct DRBG_internal *)rng.drbg)->reseedCtr = WC_RESEED_INTERVAL;
-
-    ret = wc_RNG_GenerateBlock(&rng, output, sizeof(output));
-    if (ret != 0) {
-        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-    }
-
-    if (((struct DRBG_internal *)rng.drbg)->reseedCtr == WC_RESEED_INTERVAL) {
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    }
-
-#if defined(WOLFSSL_TRACK_MEMORY) && defined(WOLFSSL_SMALL_STACK_CACHE)
-    if (current_totalAllocs != wc_MemStats_Ptr->totalAllocs) {
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    }
-#endif
-
-    ret = wc_FreeRng(&rng);
-    if (ret != 0) {
-        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-    }
 
     ret = wc_SetSeed_Cb(seed_cb);
     if (ret != 0) {
