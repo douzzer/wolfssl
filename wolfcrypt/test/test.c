@@ -61117,6 +61117,17 @@ static wc_test_ret_t mldsa_param_test(int param, WC_RNG* rng)
     if (res != 1)
         ERROR_OUT(WC_TEST_RET_ENC_I(res), out);
 
+    /* Empty message passed as (NULL, 0): sign/verify roundtrip. */
+    sigLen = wc_MlDsaKey_SigSize(key);
+    ret = wc_MlDsaKey_SignCtx(key, NULL, 0, sig, &sigLen, NULL, 0, rng);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    ret = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, NULL, 0, NULL, 0, &res);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (res != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_I(res), out);
+
     /* A signature that carries no hints must still have every hint byte
      * zero.  h[0] used to escape that check, so a stray byte there was
      * accepted.  FIPS 204 Alg 21 step 8.  The hint area is the last
