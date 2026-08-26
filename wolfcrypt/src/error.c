@@ -751,6 +751,12 @@ const char* wc_GetErrorString(int error)
     case NO_DEFAULT_FOUND_E:
         return "No default object registered for request type";
 
+    case NOT_READY_E:
+        return "Resource not yet ready";
+
+    case RETRY_E:
+        return "Operation can be retried";
+
     case MAX_CODE_E:
     case WC_SPAN1_MIN_CODE_E:
     case MIN_CODE_E:
