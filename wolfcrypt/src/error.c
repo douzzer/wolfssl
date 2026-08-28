@@ -752,10 +752,13 @@ const char* wc_GetErrorString(int error)
         return "No default object registered for request type";
 
     case NOT_READY_E:
-        return "Resource not yet ready";
+        return "Resource not yet ready (retry)";
 
-    case RETRY_E:
-        return "Operation can be retried";
+    case OBJECT_NOT_LOCKED_E:
+        return "Required lock on object is not held";
+
+    case WRONG_TYPE_OBJECT_E:
+        return "Object is wrong type for requested operation";
 
     case MAX_CODE_E:
     case WC_SPAN1_MIN_CODE_E:

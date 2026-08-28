@@ -350,11 +350,13 @@ enum wolfCrypt_ErrorCodes {
                                  /* parameters are unapproved for FIPS */
     NO_DEFAULT_FOUND_E  = -1029, /* No default object registered for request
                                   * type */
-    NOT_READY_E         = -1030, /* Resource not yet ready */
-    RETRY_E             = -1031, /* Operation can be retried */
+    NOT_READY_E         = -1030, /* Resource not yet ready (retry) */
+    OBJECT_NOT_LOCKED_E = -1031, /* Required lock on object is not held */
+    WRONG_TYPE_OBJECT_E = -1032, /* Object is wrong type for requested */
+                                 /* operation */
 
-    WC_SPAN2_LAST_E     = -1031, /* Update to indicate last used error code */
-    WC_LAST_E           = -1031, /* the last code used either here or in
+    WC_SPAN2_LAST_E     = -1032, /* Update to indicate last used error code */
+    WC_LAST_E           = -1032, /* the last code used either here or in
                                   * error-ssl.h */
 
     WC_SPAN2_MIN_CODE_E = -1999, /* Last usable code in span 2 */

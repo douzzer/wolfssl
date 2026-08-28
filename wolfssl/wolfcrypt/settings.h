@@ -1509,7 +1509,7 @@
     /* user needs to define XTIME to function that provides
      * seconds since Unix epoch */
     #ifndef XTIME
-        #error XTIME must be defined in wolfSSL settings.h
+        #error XTIME must be defined in wolfSSL user_settings.h
         /* #define XTIME fnSecondsSinceEpoch */
     #endif
 
@@ -5939,10 +5939,6 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
 #if defined(NO_WOLFSSL_CLIENT) && defined(NO_WOLFSSL_SERVER) && \
     !defined(WOLFCRYPT_ONLY) && !defined(NO_TLS)
 #error "If TLS is enabled please make sure either client or server is enabled."
-#endif
-
-#if defined(WC_RNG_BANK_SUPPORT) && defined(NO_ASN_TIME)
-    #undef WC_RNG_BANK_SUPPORT
 #endif
 
 /* The OCSP responder time-stamps every response it generates (producedAt,

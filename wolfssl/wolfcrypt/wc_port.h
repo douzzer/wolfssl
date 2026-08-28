@@ -1568,11 +1568,18 @@ WOLFSSL_ABI WOLFSSL_API int wolfCrypt_Cleanup(void);
     #endif
 
 #elif defined(TIME_OVERRIDES)
-    /* Override XTIME() and XGMTIME() functionality.
-       Requires user to provide these functions:
-        time_t XTIME(time_t * timer) {}
-        struct tm* XGMTIME(const time_t* timer, struct tm* tmp) {}
-    */
+    /* User-supplied override XTIME() and XGMTIME() functionality.
+     *
+     * Requires user-supplied macro definitions for XTIME() and XGMTIME(),
+     * mapping to function with signatures time_t time_f(time_t * timer) and
+     * struct tm* gmtime_f(const time_t* timer, struct tm* tmp) respectively.
+     */
+    #ifndef XTIME
+            #error TIME_OVERRIDES requires a user-supplied XTIME definition.
+    #endif
+    #ifndef XGMTIME
+            #error TIME_OVERRIDES requires a user-supplied XGMTIME definition.
+    #endif
     #ifndef HAVE_TIME_T_TYPE
         #define USE_WOLF_TIME_T
     #endif
