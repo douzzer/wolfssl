@@ -403,10 +403,10 @@ WOLFSSL_API int wc_rng_new_bankref(struct wc_rng_bank *bank, WC_RNG **rng);
         return wc_RNG_lock_get(WC_RNG_BANK_INST_TO_RNG(inst), extra_bits);
     }
     static WC_INLINE int wc_rng_bank_inst_lock_put(struct wc_rng_bank_inst *inst) {
-        return wc_RNG_lock_put(WC_RNG_BANK_INST_TO_RNG(inst));
+        return wc_RNG_lock_put(WC_RNG_BANK_INST_TO_RNG(inst), 0);
     }
-    static WC_INLINE int wc_rng_bank_inst_lock_put_conditional(struct wc_rng_bank_inst *inst, WC_RNG_lock_arg_t extra_bits) {
-        return wc_RNG_lock_put_conditional(WC_RNG_BANK_INST_TO_RNG(inst), extra_bits);
+    static WC_INLINE int wc_rng_bank_inst_lock_put_conditional(struct wc_rng_bank_inst *inst, WC_RNG_lock_arg_t expect_extra_bits) {
+        return wc_RNG_lock_put_conditional(WC_RNG_BANK_INST_TO_RNG(inst), expect_extra_bits, 0);
     }
     static WC_INLINE int wc_rng_bank_inst_lock_read(struct wc_rng_bank_inst *inst, WC_RNG_lock_arg_t *state) {
         return wc_RNG_lock_read(WC_RNG_BANK_INST_TO_RNG(inst), state);

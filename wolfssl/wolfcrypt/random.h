@@ -784,9 +784,13 @@ WOLFSSL_API int  wc_FreeRng(WC_RNG* rng);
     #define WC_RNG_LOCK_EXTRA_SHIFT 2U
 
     WOLFSSL_API int wc_RNG_lock_get(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits);
-    WOLFSSL_API int wc_RNG_lock_put(WC_RNG* rng);
+    WOLFSSL_API int wc_RNG_lock_get_conditional(WC_RNG* rng,
+                                                WC_RNG_lock_arg_t expected_extra_bits,
+                                                WC_RNG_lock_arg_t want_extra_bits);
+    WOLFSSL_API int wc_RNG_lock_put(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits);
     WOLFSSL_API int wc_RNG_lock_put_conditional(WC_RNG* rng,
-                                                WC_RNG_lock_arg_t extra_bits);
+                                                WC_RNG_lock_arg_t expected_extra_bits,
+                                                WC_RNG_lock_arg_t want_extra_bits);
     WOLFSSL_API int wc_RNG_lock_read(WC_RNG* rng, WC_RNG_lock_arg_t* state);
     WOLFSSL_API int wc_RNG_lock_set_extra(WC_RNG* rng,
                                           WC_RNG_lock_arg_t extra_bits);

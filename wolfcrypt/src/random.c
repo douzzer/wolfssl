@@ -2708,12 +2708,18 @@ int wc_InitRngNonce_ex2(WC_RNG* rng, byte* nonce, word32 nonceSz,
 
 #ifdef WC_RNG_HAVE_LOCK
 
+/* Note, in CAS updates here, the stored value derives only from expected and
+ * the caller's arguments, never from a prior load.  This assures no race with
+ * unlocked changes to any bits.
+ */
+
 int wc_RNG_lock_get(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
 {
-    WC_RNG_lock_arg_t expected;
+    WC_RNG_lock_arg_t cur_lock;
 
     if (rng == NULL)
         return BAD_FUNC_ARG;
+
 #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
     /* outermost blocking layer, when constructed with _USE_FULL_MUTEX:
      * contending getters sleep here rather than seeing BUSY_E. */
@@ -2722,45 +2728,100 @@ int wc_RNG_lock_get(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
             return BAD_MUTEX_E;
     }
 #endif
-    /* a free instance's latch is WC_RNG_LOCK_FREE plus, possibly, the
-     * sticky WC_RNG_LOCK_REQUIRED bit -- carry it into both sides of the
-     * CAS. */
-#ifdef WC_RNG_LOCK_OPS_ALWAYS_CAS
-    expected = WOLFSSL_ATOMIC_LOAD(rng->lock) & ~WC_RNG_LOCK_HELD;
-#else
-    expected = WOLFSSL_ATOMIC_LOAD(rng->lock) & WC_RNG_LOCK_REQUIRED;
-#endif
-    if (wolfSSL_Atomic_Uint_CompareExchange(
-            &rng->lock, &expected,
-            WC_RNG_LOCK_HELD | extra_bits | expected))
+
+    /* extra_bits is allowed to assert WC_RNG_LOCK_REQUIRED, which is in the
+     * reserved section. */
+    extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
+        WC_RNG_LOCK_REQUIRED;
+
+    cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
+    if ((! (cur_lock & WC_RNG_LOCK_HELD)) &&
+        (wolfSSL_Atomic_Uint_CompareExchange(
+            &rng->lock, &cur_lock,
+            cur_lock | WC_RNG_LOCK_HELD | extra_bits)))
     {
         return 0;
     }
+
 #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
     /* CAS failure with the mutex held means a non-mutex claimant holds
      * the latch (mixed-discipline use); back out the mutex. */
     if (rng->flags & WC_RNG_FLAG_FULL_MUTEX)
         (void)wc_UnLockMutex(&rng->mutex);
 #endif
+
     return BUSY_E;
 }
 
-int wc_RNG_lock_put(WC_RNG* rng)
+int wc_RNG_lock_get_conditional(WC_RNG* rng, WC_RNG_lock_arg_t expected_extra_bits, WC_RNG_lock_arg_t want_extra_bits)
 {
-    WC_RNG_lock_arg_t cur_lock;
+    WC_RNG_lock_arg_t cur_lock, expected;
+
+    if (rng == NULL)
+        return BAD_FUNC_ARG;
+
+#ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
+    /* outermost blocking layer, when constructed with _USE_FULL_MUTEX:
+     * contending getters sleep here rather than seeing BUSY_E. */
+    if (rng->flags & WC_RNG_FLAG_FULL_MUTEX) {
+        if (wc_LockMutex(&rng->mutex) != 0)
+            return BAD_MUTEX_E;
+    }
+#endif
+
+    /* extra_bits is allowed to assert WC_RNG_LOCK_REQUIRED, which is in the
+     * reserved section. */
+    expected_extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
+        WC_RNG_LOCK_REQUIRED;
+    want_extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
+        WC_RNG_LOCK_REQUIRED;
+
+    cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
+
+    expected = (cur_lock & (((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) & ~WC_RNG_LOCK_HELD)) |
+        expected_extra_bits;
+
+    if ((! (cur_lock & WC_RNG_LOCK_HELD)) &&
+        (wolfSSL_Atomic_Uint_CompareExchange(
+            &rng->lock, &expected,
+            expected | WC_RNG_LOCK_HELD | want_extra_bits)))
+    {
+        return 0;
+    }
+
+#ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
+    /* CAS failure with the mutex held means a non-mutex claimant holds
+     * the latch (mixed-discipline use); back out the mutex. */
+    if (rng->flags & WC_RNG_FLAG_FULL_MUTEX)
+        (void)wc_UnLockMutex(&rng->mutex);
+#endif
+
+    return BUSY_E;
+}
+
+int wc_RNG_lock_put(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
+{
+    WC_RNG_lock_arg_t cur_lock, new_lock;
     if (rng == NULL)
         return BAD_FUNC_ARG;
     cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
     if (! (cur_lock & WC_RNG_LOCK_HELD))
-        return BAD_STATE_E;
+        return OBJECT_NOT_LOCKED_E;
+
+    new_lock = cur_lock & (((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) & ~WC_RNG_LOCK_HELD);
+    /* extra_bits is allowed to assert WC_RNG_LOCK_REQUIRED, which is in the
+     * reserved section. */
+    extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
+        WC_RNG_LOCK_REQUIRED;
+    new_lock |= extra_bits;
+
 #ifdef WC_RNG_LOCK_OPS_ALWAYS_CAS
     if (! wolfSSL_Atomic_Uint_CompareExchange(
-            &rng->lock, &cur_lock,
-            cur_lock & ~WC_RNG_LOCK_HELD))
+            &rng->lock, &cur_lock, new_lock))
         return BUSY_E;
 #else
     /* unconditional release, preserving only the sticky bit */
-    WOLFSSL_ATOMIC_STORE(rng->lock, cur_lock & WC_RNG_LOCK_REQUIRED);
+    WOLFSSL_ATOMIC_STORE(rng->lock, new_lock);
 #endif
 #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
     if (rng->flags & WC_RNG_FLAG_FULL_MUTEX)
@@ -2769,17 +2830,32 @@ int wc_RNG_lock_put(WC_RNG* rng)
     return 0;
 }
 
-int wc_RNG_lock_put_conditional(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
+int wc_RNG_lock_put_conditional(WC_RNG* rng, WC_RNG_lock_arg_t expected_extra_bits, WC_RNG_lock_arg_t want_extra_bits)
 {
-    WC_RNG_lock_arg_t expected;
+    WC_RNG_lock_arg_t cur_lock, expected, new_lock;
 
     if (rng == NULL)
         return BAD_FUNC_ARG;
-    expected = WC_RNG_LOCK_HELD | extra_bits;
+
+    cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
+    if (! (cur_lock & WC_RNG_LOCK_HELD))
+        return OBJECT_NOT_LOCKED_E;
+
+    new_lock = cur_lock & (((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) & ~WC_RNG_LOCK_HELD);
+    /* want_extra_bits is allowed to assert WC_RNG_LOCK_REQUIRED, which is in the
+     * reserved section. */
+    want_extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
+        WC_RNG_LOCK_REQUIRED;
+    new_lock |= want_extra_bits;
+
+    expected = WC_RNG_LOCK_HELD | expected_extra_bits;
+
+    new_lock |= (expected_extra_bits & WC_RNG_LOCK_REQUIRED);
+
     /* release preserves the sticky bit if the caller reports it held */
     if (wolfSSL_Atomic_Uint_CompareExchange(
             &rng->lock, &expected,
-            extra_bits & WC_RNG_LOCK_REQUIRED))
+            new_lock))
     {
 #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
         if (rng->flags & WC_RNG_FLAG_FULL_MUTEX)
@@ -2789,7 +2865,7 @@ int wc_RNG_lock_put_conditional(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
     }
     /* conditional release failed: the caller is still the holder, at both
      * layers -- the mutex stays held. */
-    return BAD_STATE_E;
+    return BUSY_E;
 }
 
 int wc_RNG_lock_read(WC_RNG* rng, WC_RNG_lock_arg_t* state)
@@ -2853,10 +2929,19 @@ int wc_RNG_lock_add_extra(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
     extra_bits &= ~((1U << WC_RNG_LOCK_EXTRA_SHIFT) - 1U) |
         WC_RNG_LOCK_REQUIRED;
 
+#ifdef WC_RNG_LOCK_OPS_ALWAYS_CAS
+    if (wolfSSL_Atomic_Uint_CompareExchange(
+            &rng->lock, &cur_lock,
+            cur_lock | extra_bits))
+        return 0;
+    else
+        return BUSY_E;
+#else
     /* owner-only by contract; a plain release store suffices because the
      * holder is the sole writer while HELD */
     WOLFSSL_ATOMIC_STORE(rng->lock, cur_lock | extra_bits);
     return 0;
+#endif
 }
 
 int wc_RNG_lock_clear_extra(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits)
