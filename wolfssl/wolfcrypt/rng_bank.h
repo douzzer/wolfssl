@@ -106,6 +106,7 @@
  * a use-after-free instead of BUSY_E -- only containers whose teardown
  * provably quiesces consumers first may set it. */
 #define WC_RNG_BANK_FLAG_NO_CHECKOUT_REFCOUNTING (1<<11)
+#define WC_RNG_BANK_FLAG_INIT_RBGC   (1<<12)
 
 /* base lock states are WC_RNG_LOCK_FREE / WC_RNG_LOCK_HELD in random.h;
  * these annotation bits ride above WC_RNG_LOCK_HELD via
@@ -208,6 +209,16 @@ WOLFSSL_API int wc_rng_bank_init(
     void *heap,
     int devId);
 
+WOLFSSL_API int wc_rng_bank_init_nonce(
+    struct wc_rng_bank *ctx,
+    int n_rngs,
+    word32 flags,
+    int timeout_secs,
+    void *heap,
+    int devId,
+    const byte *nonce,
+    word32 nonceSz);
+
 WOLFSSL_API int wc_rng_bank_first_failover_inst_set(
     struct wc_rng_bank *ctx,
     int first_failover_inst);
@@ -303,6 +314,11 @@ WOLFSSL_API int wc_rng_bank_next_seed_generate(
     struct wc_rng_bank *bank,
     int inst_offset,
     word32 n);
+WOLFSSL_API int wc_rng_bank_next_seed_generate_rbgc(
+    struct wc_rng_bank *bank,
+    int inst_offset,
+    word32 n,
+    WC_RNG *root);
 #endif
 
 WOLFSSL_API int wc_rng_bank_inst_reinit(

@@ -56,17 +56,23 @@
  * retry indefinitely, pass negative timeout_secs -- the flags arg here is only
  * used to initialize the flags in the new bank.
  */
-WOLFSSL_API int wc_rng_bank_init(
+WOLFSSL_API int wc_rng_bank_init_nonce(
     struct wc_rng_bank *ctx,
     int n_rngs,
     word32 flags,
     int timeout_secs,
     void *heap,
-    int devId)
+    int devId,
+    const byte *nonce,
+    word32 nonceSz)
 {
     int i;
     int ret;
     int need_reenable_vec = 0;
+#ifdef WC_RNG_HAVE_RBGC
+    WC_RNG root;
+    int root_inited = 0;
+#endif
 
     if ((ctx == NULL) || (n_rngs <= 0))
         return BAD_FUNC_ARG;
@@ -95,6 +101,14 @@ WOLFSSL_API int wc_rng_bank_init(
         ret = MEMORY_E;
 #endif
 
+#ifdef WC_RNG_HAVE_RBGC
+    if ((ret == 0) && (flags & WC_RNG_BANK_FLAG_INIT_RBGC)) {
+        ret = wc_InitRngNonce_ex(&root, nonce, nonceSz, heap, devId);
+        if (ret == 0)
+            root_inited = 1;
+    }
+#endif
+
     if (ret == 0) {
         XMEMSET(ctx->rngs, 0, sizeof(*ctx->rngs) * (size_t)n_rngs);
         ctx->n_rngs = n_rngs;
@@ -110,19 +124,31 @@ WOLFSSL_API int wc_rng_bank_init(
             rng_inst->bank = ctx;
             for (;;) {
                 time_t ts2;
-
                 if (flags & WC_RNG_BANK_FLAG_NO_VECTOR_OPS)
                     need_reenable_vec = (DISABLE_VECTOR_REGISTERS() == 0);
+
+#ifdef WC_RNG_HAVE_RBGC
+                if (flags & WC_RNG_BANK_FLAG_INIT_RBGC) {
+                    ret = wc_InitRngNonceRBGC(
+                        WC_RNG_BANK_INST_TO_RNG(rng_inst),
+                        &root,
+                        (byte *)&rng_inst, sizeof(byte *),
+                        WC_RNG_INIT_FLAGS_LOCK_REQUIRED);
+                }
+                else
+#endif
+                {
 #ifdef WC_RNG_INIT_FLAGS_LOCK_REQUIRED
-                ret = wc_InitRngNonce_ex2(
+                    ret = wc_InitRngNonce_ex2(
                         WC_RNG_BANK_INST_TO_RNG(rng_inst),
                         (byte *)&rng_inst, sizeof(byte *), heap, devId,
                         WC_RNG_INIT_FLAGS_LOCK_REQUIRED);
 #else
-                ret = wc_InitRngNonce_ex(
+                    ret = wc_InitRngNonce_ex(
                         WC_RNG_BANK_INST_TO_RNG(rng_inst),
                         (byte *)&rng_inst, sizeof(byte *), heap, devId);
 #endif
+                }
                 if (need_reenable_vec)
                     REENABLE_VECTOR_REGISTERS();
                 /* if we're allowed to sleep, relax the loop between each inner
@@ -187,7 +213,24 @@ out:
     if (ret != 0)
         (void)wc_rng_bank_fini(ctx);
 
+#ifdef WC_RNG_HAVE_RBGC
+    if (root_inited)
+        wc_FreeRng(&root);
+#endif
+
     return ret;
+}
+
+WOLFSSL_API int wc_rng_bank_init(
+    struct wc_rng_bank *ctx,
+    int n_rngs,
+    word32 flags,
+    int timeout_secs,
+    void *heap,
+    int devId)
+{
+
+    return wc_rng_bank_init_nonce(ctx, n_rngs, flags, timeout_secs, heap, devId, NULL, 0);
 }
 
 WOLFSSL_API int wc_rng_bank_first_failover_inst_set(
@@ -665,6 +708,9 @@ WOLFSSL_API int wc_rng_bank_checkout(
         {
             int inst_unusable;
             wc_drbg_reseed_ctr_t cur_reseed_ctr = 0;
+#ifdef WC_RNG_HAVE_NEXT_SEED
+            WC_ATOMIC_INT_ARG NextSeedCurrent;
+#endif
 
             *rng_inst = &bank->rngs[preferred_inst_offset];
 
@@ -743,7 +789,12 @@ WOLFSSL_API int wc_rng_bank_checkout(
                    (wc_RNG_DRBG_GetReseedCtr(
                        WC_RNG_BANK_INST_TO_RNG(*rng_inst),
                        &cur_reseed_ctr) == 0) &&
-                   (cur_reseed_ctr >= WC_RESEED_INTERVAL)))))
+                   (cur_reseed_ctr >= WC_RESEED_INTERVAL)
+            #ifdef WC_RNG_HAVE_NEXT_SEED
+                   && (wc_RNG_DRBG_NextSeedCurrent(WC_RNG_BANK_INST_TO_RNG(*rng_inst), &NextSeedCurrent) == 0)
+                   && (NextSeedCurrent != WC_DRBG_NEXT_SEED_READY)
+            #endif
+                      ))))
             {
                 if (inst_unusable)
                     diverted_unusable = 1;
@@ -1124,10 +1175,11 @@ WOLFSSL_API int wc_rng_bank_inst_checkin(
 #define WC_RNG_BANK_INST_OP_DAEMON ((WC_ATOMIC_INT_ARG)1)
 #define WC_RNG_BANK_INST_OP_REINIT ((WC_ATOMIC_INT_ARG)2)
 
-WOLFSSL_API int wc_rng_bank_next_seed_generate(
+static int wc_rng_bank_next_seed_generate_local(
     struct wc_rng_bank *bank,
     int inst_offset,
-    word32 n)
+    word32 n,
+    WC_RNG *root)
 {
     int ret;
     WC_ATOMIC_INT_ARG expected = 0;
@@ -1146,12 +1198,37 @@ WOLFSSL_API int wc_rng_bank_next_seed_generate(
         return BUSY_E;
     }
 
-    ret = wc_RNG_DRBG_NextSeedGenerate(
-        WC_RNG_BANK_INST_TO_RNG(&bank->rngs[inst_offset]), n);
+    if (root == NULL) {
+        ret = wc_RNG_DRBG_NextSeedGenerate(
+            WC_RNG_BANK_INST_TO_RNG(&bank->rngs[inst_offset]), n);
+    }
+    else {
+        ret = wc_RNG_DRBG_NextSeedGenerate_RBGC(
+            WC_RNG_BANK_INST_TO_RNG(&bank->rngs[inst_offset]), root, n);
+    }
 
     WOLFSSL_ATOMIC_STORE(bank->inst_op_gate, 0);
 
     return ret;
+}
+
+WOLFSSL_API int wc_rng_bank_next_seed_generate_rbgc(
+    struct wc_rng_bank *bank,
+    int inst_offset,
+    word32 n,
+    WC_RNG *root)
+{
+    if (root == NULL)
+        return BAD_FUNC_ARG;
+    return wc_rng_bank_next_seed_generate_local(bank, inst_offset, n, root);
+}
+
+WOLFSSL_API int wc_rng_bank_next_seed_generate(
+    struct wc_rng_bank *bank,
+    int inst_offset,
+    word32 n)
+{
+    return wc_rng_bank_next_seed_generate_local(bank, inst_offset, n, NULL);
 }
 
 #endif /* WC_RNG_HAVE_NEXT_SEED */

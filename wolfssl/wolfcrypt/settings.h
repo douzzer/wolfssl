@@ -4604,15 +4604,17 @@
     #endif
 
     #ifndef WC_RESEED_INTERVAL
-        /* In kernel mode, use the maximum reseed interval allowed by
+        /* In kernel mode, use the maximum mandatory reseed threshold allowed by
          * NIST SP 800-90A Rev. 1, to avoid unnecessary delays in DRBG
          * generation.
          */
         #if defined(HAVE_FIPS) && \
             FIPS_VERSION_LT(6,0) && FIPS_VERSION3_NE(5,2,4)
             #define WC_RESEED_INTERVAL UINT_MAX
+        #elif defined(WC_16BIT_CPU) || defined(NO_64BIT)
+            #define WC_RESEED_INTERVAL UINT_MAX
         #else
-            #define WC_RESEED_INTERVAL (((word64)1UL)<<48UL)
+            #define WC_RESEED_INTERVAL (1UL << 48UL)
         #endif
     #endif
 

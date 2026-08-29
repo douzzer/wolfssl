@@ -27839,7 +27839,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t random_bank_test(void)
     if (ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
     leaf_rng_inited = 1;
-    if (wc_RNG_DRBG_IsRBGCLeaf(leaf_rng) != 1)
+    if (wc_RNG_DRBG_GetRBGCDepth(leaf_rng) != 1)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     ret = wc_RNG_GenerateBlock(leaf_rng, outbuf1, sizeof(outbuf1));
     if (ret != 0)
@@ -27854,7 +27854,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t random_bank_test(void)
     ret = wc_rng_bank_spawn_new(bank, &spawned_rng, NULL, 0, 1, 0, 0);
     if (ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-    if ((spawned_rng == NULL) || (wc_RNG_DRBG_IsRBGCLeaf(spawned_rng) != 1))
+    if ((spawned_rng == NULL) || (wc_RNG_DRBG_GetRBGCDepth(spawned_rng) != 1))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     ret = wc_RNG_GenerateBlock(spawned_rng, outbuf1, sizeof(outbuf1));
     if (ret != 0)
@@ -27960,7 +27960,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_svc_test(void)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     if (wc_RNG_DRBG_Present(NULL) != 0)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    if (wc_RNG_DRBG_IsRBGCLeaf(NULL) != 0)
+    if (wc_RNG_DRBG_GetRBGCDepth(NULL) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     if (wc_RNG_DRBG_GetReseedCtr(NULL, &c1) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
@@ -27975,7 +27975,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_svc_test(void)
     if (wc_RNG_DRBG_GetReseedCtr(root, NULL) !=
         WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    if (wc_RNG_DRBG_IsRBGCLeaf(root) != 0)
+    if (wc_RNG_DRBG_GetRBGCDepth(root) != 0)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
     present = wc_RNG_DRBG_Present(root);
@@ -28228,25 +28228,14 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_rbgc_test(void)
         if ((api_ret != 0) || (c2 <= c1))
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     }
-    if (wc_RNG_DRBG_IsRBGCLeaf(&leaf) != 1)
+    if (wc_RNG_DRBG_GetRBGCDepth(&leaf) != 1)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    if (wc_RNG_DRBG_IsRBGCLeaf(&root) != 0)
+    if (wc_RNG_DRBG_GetRBGCDepth(&root) != 0)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     api_ret = wc_RNG_GenerateBlock(&leaf, buf, sizeof(buf));
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
 
-    /* depth-one enforcement: a leaf is never a root */
-    if (wc_InitRngRBGC(&extra, &leaf, WC_RNG_INIT_FLAGS_NONE) !=
-            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-#ifndef WC_NO_CONSTRUCTORS
-    if (wc_InitRngRBGC_New(&pleaf, &leaf, WC_RNG_INIT_FLAGS_NONE) !=
-        WC_NO_ERR_TRACE(BAD_FUNC_ARG))
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-    if (pleaf != NULL)
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-#endif
     if (wc_RNG_DRBG_ReseedRBGC(&root, &leaf, NULL, 0) !=
         WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
@@ -28273,15 +28262,16 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_rbgc_test(void)
         WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-    /* the leaf tag is sticky across a source reseed */
+    /* the RGBC depth is cleared by a primary source reseed */
     api_ret = wc_RNG_DRBG_ScheduleReseed(&leaf);
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
     api_ret = wc_RNG_GenerateBlock(&leaf, buf, sizeof(buf));
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
-    if (wc_RNG_DRBG_IsRBGCLeaf(&leaf) != 1)
-        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    ret = wc_RNG_DRBG_GetRBGCDepth(&leaf);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_I(ret), out);
 
 #if !defined(WC_NO_CONSTRUCTORS)
     /* chain-reseeding a source-born instance demotes it, one-way */
@@ -28289,24 +28279,29 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_rbgc_test(void)
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
     extra_inited = 1;
-    if (wc_RNG_DRBG_IsRBGCLeaf(&extra) != 0)
+    if (wc_RNG_DRBG_GetRBGCDepth(&extra) != 0)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     if (present) {
         api_ret = wc_RNG_DRBG_ReseedRBGC(&extra, &root, NULL, 0);
         if (api_ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
-        if (wc_RNG_DRBG_IsRBGCLeaf(&extra) != 1)
+        if (wc_RNG_DRBG_GetRBGCDepth(&extra) != 1)
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
-        if (wc_InitRngRBGC_New(&pleaf, &extra, WC_RNG_INIT_FLAGS_NONE) !=
-            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        /* long-chained init is allowed, only chained reseed is forbidden. */
+        ret = wc_InitRngRBGC_New(&pleaf, &extra, WC_RNG_INIT_FLAGS_NONE);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+        if ((pleaf == NULL) || (wc_RNG_DRBG_GetRBGCDepth(pleaf) != 2))
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+        wc_rng_free(pleaf);
+        pleaf = NULL;
     }
 
     /* heap-allocated leaves, without and with a nonce */
     api_ret = wc_InitRngRBGC_New(&pleaf, &root, WC_RNG_INIT_FLAGS_NONE);
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
-    if ((pleaf == NULL) || (wc_RNG_DRBG_IsRBGCLeaf(pleaf) != 1))
+    if ((pleaf == NULL) || (wc_RNG_DRBG_GetRBGCDepth(pleaf) != 1))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     api_ret = wc_RNG_GenerateBlock(pleaf, buf, sizeof(buf));
     if (api_ret != 0)
@@ -28317,7 +28312,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_rbgc_test(void)
                                       WC_RNG_INIT_FLAGS_NONE);
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
-    if ((pleaf == NULL) || (wc_RNG_DRBG_IsRBGCLeaf(pleaf) != 1))
+    if ((pleaf == NULL) || (wc_RNG_DRBG_GetRBGCDepth(pleaf) != 1))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     wc_rng_free(pleaf);
     pleaf = NULL;
@@ -28333,7 +28328,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rng_drbg_rbgc_test(void)
     if (api_ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(api_ret), out);
     leaf_inited = 1;
-    if (wc_RNG_DRBG_IsRBGCLeaf(&leaf) != 1)
+    if (wc_RNG_DRBG_GetRBGCDepth(&leaf) != 1)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
 out:

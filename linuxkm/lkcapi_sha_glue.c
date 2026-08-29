@@ -2197,8 +2197,7 @@ static int linuxkm_affinity_unlock(void *arg) {
      * requests cost the same. */
     #define WC_LINUXKM_ENTROPY_DAEMON_GRANULE 32
 #endif
-#if defined(WC_RNG_HAVE_POOL) && \
-    !defined(WC_LINUXKM_BONUS_RESEED_INTERVAL)
+#if !defined(WC_LINUXKM_BONUS_RESEED_INTERVAL)
     /* Opportunistic supplementary reseed interval, for daemon seeding and
      * wc_RNG_DRBG_NextSeedNow().  Pass rate is load-variable (e.g. nap-paced
      * when idle, cond_resched()-paced when busy), so a busy RNG reseeds more
@@ -2206,10 +2205,14 @@ static int linuxkm_affinity_unlock(void *arg) {
      * WC_RESEED_INTERVAL auto-reseed remains the backstop if this schedule is
      * somehow starved. */
     #define WC_LINUXKM_BONUS_RESEED_INTERVAL 1000
+    #if WC_LINUXKM_BONUS_RESEED_INTERVAL >= WC_RESEED_INTERVAL / 2
+        #undef WC_LINUXKM_BONUS_RESEED_INTERVAL
+        #define WC_LINUXKM_BONUS_RESEED_INTERVAL (WC_RESEED_INTERVAL / 2)
+    #endif
 #endif
 
 wc_static_assert(WC_LINUXKM_BONUS_RESEED_INTERVAL >= 0 &&
-                 WC_LINUXKM_BONUS_RESEED_INTERVAL <= WC_RESEED_INTERVAL);
+                 WC_LINUXKM_BONUS_RESEED_INTERVAL < WC_RESEED_INTERVAL / 2);
 
 #if defined(WC_RNG_HAVE_POOL) && !defined(WC_LINUXKM_RNG_POOL_SIZE)
     /* per-instance output pool ring size (2..65535).  256 = 8 native
@@ -2226,7 +2229,7 @@ static int wc_linuxkm_entropy_daemon(void *arg)
     int i;
     int ret;
 
-#ifdef WC_RNG_HAVE_POOL
+#if defined(WC_RNG_HAVE_POOL) || defined(WC_RNG_HAVE_NEXT_SEED)
     /* Daemon-local source DRBG for pool top-offs: a full peer of the bank's
      * instances, inline-reseeded at WC_LINUXKM_BONUS_RESEED_INTERVAL cadence in
      * the daemon's task context, torn down through wc_FreeRng() at shutdown.
@@ -2235,12 +2238,12 @@ static int wc_linuxkm_entropy_daemon(void *arg)
      * FIPS boundary. */
     WC_RNG *pool_src = (WC_RNG *)XMALLOC(sizeof(*pool_src), NULL,
                                          DYNAMIC_TYPE_RNG);
-    unsigned int pool_src_reseed_countdown =
-        WC_LINUXKM_BONUS_RESEED_INTERVAL;
+    int pool_src_reseed_countdown = WC_LINUXKM_BONUS_RESEED_INTERVAL;
 
     if (pool_src != NULL) {
         unsigned long uncredited_nonce = random_get_entropy();
         ret = wc_InitRngNonce(pool_src, (byte *)&uncredited_nonce, sizeof uncredited_nonce);
+        ForceZero(&uncredited_nonce, (word32)sizeof uncredited_nonce);
         if (ret != 0) {
             pr_err("wc_entropyd: pool source DRBG init failed: %d -- "
                    "pool top-off disabled\n", ret);
@@ -2249,6 +2252,7 @@ static int wc_linuxkm_entropy_daemon(void *arg)
         }
     }
 
+#ifdef WC_RNG_HAVE_POOL
     if (pool_src != NULL) {
         /* One-time pool allocation for every instance, before any
          * extractor can hold a lease against a nonempty ring.  A
@@ -2266,36 +2270,17 @@ static int wc_linuxkm_entropy_daemon(void *arg)
         }
     }
 #endif /* WC_RNG_HAVE_POOL */
+#endif /* WC_RNG_HAVE_POOL || WC_RNG_HAVE_NEXT_SEED */
 
     for (;;) {
         int progress = 0;
+        int congested_progress = 0;
 
         if (kthread_should_stop())
             break;
 
-#ifdef WC_RNG_HAVE_POOL
-        /* Periodic explicit reseed of the daemon-local pool source, with
-         * a fresh cycle-counter nonce -- scheduled fresh entropy in task
-         * context, rather than waiting for the counter-forced internal
-         * reseed. */
-        if ((pool_src != NULL) && (--pool_src_reseed_countdown < 0)) {
-            unsigned long uncredited_nonce = random_get_entropy();
-            ret = wc_RNG_DRBG_Reseed_Now(pool_src,
-                                         (byte *)&uncredited_nonce,
-                                         sizeof uncredited_nonce);
-            if (ret == 0) {
-                pool_src_reseed_countdown =
-                    WC_LINUXKM_BONUS_RESEED_INTERVAL;
-            }
-            else {
-                pr_err_ratelimited(
-                    "wc_entropyd: pool source reseed failed: %d\n", ret);
-            }
-        }
-#endif /* WC_RNG_HAVE_POOL */
-
 #ifdef HAVE_HASHDRBG
-        /* Patrol pass: recover out-of-service instances.  The status
+        /* recovery pass: fix out-of-service instances.  The status
          * peek is lockless and possibly stale -- worst case it sends a
          * recover_inst() at a healthy instance (no-op) or misses one
          * cycle; the instance-op gate arbitrates any race with an
@@ -2322,10 +2307,105 @@ static int wc_linuxkm_entropy_daemon(void *arg)
         }
 #endif /* HAVE_HASHDRBG */
 
-        /* banking pass: one gather granule per instance per turn. */
+#ifdef WC_RNG_HAVE_NEXT_SEED
+        if (pool_src != NULL) {
+            /* congestion-triggered RBGC seed pass. */
+            for (i = 0; i < bank->n_rngs; i++) {
+                wc_drbg_reseed_ctr_t this_reseedCtr;
+                ret = wc_RNG_DRBG_GetReseedCtr(WC_RNG_BANK_INST_TO_RNG(&bank->rngs[i]), &this_reseedCtr);
+                if ((ret == 0) && (this_reseedCtr > WC_RESEED_INTERVAL / 2)) {
+                    WC_ATOMIC_INT_ARG this_NextSeedCurrent;
+                    ret = wc_RNG_DRBG_NextSeedCurrent(WC_RNG_BANK_INST_TO_RNG(&bank->rngs[i]), &this_NextSeedCurrent);
+                    if ((ret == 0) && (this_NextSeedCurrent != WC_DRBG_NEXT_SEED_READY) && (this_NextSeedCurrent != WC_DRBG_NEXT_SEED_CONSUMING)) {
+                        ret = wc_rng_bank_next_seed_generate_rbgc(bank, i, WC_DRBG_NEXT_SEED_LEN, pool_src);
+                        congested_progress = 1;
+                        if (ret == 0)
+                            progress = 1;
+                    }
+                }
+            }
+        }
+#endif /* WC_RNG_HAVE_NEXT_SEED */
+
+#ifdef WC_RNG_HAVE_POOL
+        /* pooling pass -- run this pass even if there was high-load seed
+         * generation, as it is good defense against reseedCtr exhaustion.
+         */
         for (i = 0; i < bank->n_rngs; i++) {
+            /* pool top-off: fill whatever free span the ring reports.
+             * The fullness peek is a lockless aperture load; Collect2()
+             * re-clamps against a fresh snapshot and publishes by CAS,
+             * so staleness costs at most a wasted attempt.  Progress
+             * accounting keys on the peek, not the call: a full ring is
+             * not work, and NOT_READY_E means a racing consumer is making
+             * the progress. */
+            if (pool_src != NULL) {
+                word32 pool_n = 0;
+                WC_RNG *inst_rng = WC_RNG_BANK_INST_TO_RNG(&bank->rngs[i]);
+
+                if ((wc_RNG_Pool_Current(inst_rng, &pool_n) == 0) &&
+                    (inst_rng->pool != NULL) &&
+                    (pool_n < (word32)inst_rng->poolSize))
+                {
+                    unsigned long uncredited_nonce = random_get_entropy();
+                    (void)wc_RNG_DRBG_Reseed_Uncredited(pool_src,
+                                                        (byte *)&uncredited_nonce,
+                                                        (word32)sizeof uncredited_nonce);
+                    ForceZero(&uncredited_nonce, (word32)sizeof uncredited_nonce);
+                    ret = wc_RNG_Pool_Collect2(inst_rng, pool_src,
+                                               (word32)inst_rng->poolSize
+                                               - pool_n);
+                    if (ret == 0) {
+                        progress = 1;
+                    }
+                    else if ((ret == WC_NO_ERR_TRACE(NOT_READY_E)) ||
+                             (ret == WC_NO_ERR_TRACE(BAD_STATE_E)))
+                    {
+                        /* contention (consumer active) or no pool --
+                         * nothing to do here this turn. */
+                    }
+                    else {
+                        pr_err_ratelimited(
+                            "wc_entropyd: pool top-off on DRBG inst %d "
+                            "returned %d\n", i, ret);
+                    }
+                }
+            }
+        }
+#endif /* WC_RNG_HAVE_POOL */
+
+        /* if we're coping with congestion hits, continue here, don't bog down
+         * in primary seed ops. */
+        if (congested_progress)
+            goto next_pass;
+
+#if defined(WC_RNG_HAVE_POOL) || defined(WC_RNG_HAVE_NEXT_SEED)
+
+        /* Periodic explicit reseed of the daemon-local pool source, with
+         * a fresh cycle-counter nonce -- scheduled fresh entropy in task
+         * context, rather than waiting for the counter-forced internal
+         * reseed. */
+        if ((pool_src != NULL) && (--pool_src_reseed_countdown < 0)) {
+            unsigned long uncredited_nonce = random_get_entropy();
+            ret = wc_RNG_DRBG_Reseed_Now(pool_src,
+                                         (byte *)&uncredited_nonce,
+                                         sizeof uncredited_nonce);
+            ForceZero(&uncredited_nonce, sizeof uncredited_nonce);
+            if (ret == 0) {
+                pool_src_reseed_countdown =
+                    WC_LINUXKM_BONUS_RESEED_INTERVAL;
+            }
+            else {
+                pr_err_ratelimited(
+                    "wc_entropyd: pool source reseed failed: %d\n", ret);
+            }
+        }
+#endif /* WC_RNG_HAVE_POOL || WC_RNG_HAVE_NEXT_SEED */
 
 #ifdef WC_RNG_HAVE_NEXT_SEED
+        /* seed banking pass: one gather granule per instance per turn. */
+        for (i = 0; i < bank->n_rngs; i++) {
+
             ret = wc_rng_bank_next_seed_generate(
                 bank, i, WC_LINUXKM_ENTROPY_DAEMON_GRANULE);
             if ((ret == 0) || (ret == WC_NO_ERR_TRACE(NOT_READY_E))) {
@@ -2351,45 +2431,10 @@ static int wc_linuxkm_entropy_daemon(void *arg)
                     "ERROR: wc_entropyd: next_seed_generate on DRBG inst %d "
                     "returned %d\n", i, ret);
             }
+        }
 #endif /* WC_RNG_HAVE_NEXT_SEED */
 
-#ifdef WC_RNG_HAVE_POOL
-            /* pool top-off: fill whatever free span the ring reports.
-             * The fullness peek is a lockless aperture load; Collect2()
-             * re-clamps against a fresh snapshot and publishes by CAS,
-             * so staleness costs at most a wasted attempt.  Progress
-             * accounting keys on the peek, not the call: a full ring is
-             * not work, and NOT_READY_E means a racing consumer is making
-             * the progress. */
-            if (pool_src != NULL) {
-                word32 pool_n = 0;
-                WC_RNG *inst_rng = WC_RNG_BANK_INST_TO_RNG(&bank->rngs[i]);
-
-                if ((wc_RNG_Pool_Current(inst_rng, &pool_n) == 0) &&
-                    (inst_rng->pool != NULL) &&
-                    (pool_n < (word32)inst_rng->poolSize))
-                {
-                    ret = wc_RNG_Pool_Collect2(inst_rng, pool_src,
-                                               (word32)inst_rng->poolSize
-                                               - pool_n);
-                    if (ret == 0) {
-                        progress = 1;
-                    }
-                    else if ((ret == WC_NO_ERR_TRACE(NOT_READY_E)) ||
-                             (ret == WC_NO_ERR_TRACE(BAD_STATE_E)))
-                    {
-                        /* contention (consumer active) or no pool --
-                         * nothing to do here this turn. */
-                    }
-                    else {
-                        pr_err_ratelimited(
-                            "wc_entropyd: pool top-off on DRBG inst %d "
-                            "returned %d\n", i, ret);
-                    }
-                }
-            }
-#endif /* WC_RNG_HAVE_POOL */
-        }
+        next_pass:
 
         if (progress) {
             cond_resched();
@@ -2400,7 +2445,7 @@ static int wc_linuxkm_entropy_daemon(void *arg)
         }
     }
 
-#ifdef WC_RNG_HAVE_POOL
+#if defined(WC_RNG_HAVE_POOL) || defined(WC_RNG_HAVE_NEXT_SEED)
     if (pool_src != NULL) {
         (void)wc_FreeRng(pool_src);
         XFREE(pool_src, NULL, DYNAMIC_TYPE_RNG);
@@ -2416,6 +2461,7 @@ static int wc_linuxkm_rng_bank_init(struct wc_rng_bank *ctx)
 {
     int ret;
     word32 flags = WC_RNG_BANK_FLAG_CAN_WAIT;
+    unsigned long uncredited_nonce = random_get_entropy();
 
 #if defined(HAVE_FIPS) && FIPS_VERSION3_LT(7,0,0)
     /* before v7, the SHA-2 implementations couldn't dynamically switch between
@@ -2429,11 +2475,12 @@ static int wc_linuxkm_rng_bank_init(struct wc_rng_bank *ctx)
      * checkouts by kernel crypto API teardown ordering, so per-checkout
      * refcounting buys nothing here and is the one bank-global RMW pair
      * on the readout hot path. */
-    ret = wc_rng_bank_init(
+    ret = wc_rng_bank_init_nonce(
         ctx, LINUXKM_RNG_BANK_SIZE,
-        flags | WC_RNG_BANK_FLAG_NO_CHECKOUT_REFCOUNTING,
+        flags | WC_RNG_BANK_FLAG_NO_CHECKOUT_REFCOUNTING | WC_RNG_BANK_FLAG_INIT_RBGC,
         WC_LINUXKM_INITRNG_TIMEOUT_SEC,
-        NULL /* heap */, INVALID_DEVID);
+        NULL /* heap */, INVALID_DEVID,
+        (byte *)&uncredited_nonce, (word32)sizeof uncredited_nonce);
 
     if (ret == 0) {
         (void)wc_rng_bank_first_failover_inst_set(ctx, LINUXKM_RNG_BANK_FIRST_FAILOVER);
@@ -2584,6 +2631,7 @@ WC_MAYBE_UNUSED static int linuxkm_InitRng_DefaultRBGC(WC_RNG* rng) {
                                 0 /* timeout_secs */,
                                 WC_RNG_BANK_FLAG_CAN_FAIL_OVER_INST |
                                 WC_RNG_BANK_FLAG_PREFER_AFFINITY_INST);
+    ForceZero(&uncredited_nonce, (word32)sizeof uncredited_nonce);
     if (ret == 0)
         return 0;
     else {
@@ -2631,14 +2679,19 @@ WC_MAYBE_UNUSED static int linuxkm_InitRng_DefaultRef(WC_RNG* rng) {
 
 static int wc_linuxkm_drbg_generate(struct wc_rng_bank *ctx,
                                     const u8 *src, unsigned int slen,
-                                    u8 *dst, unsigned int dlen)
+                                    u8 *dst, unsigned int dlen, int pr)
 {
     int ret, retried = 0;
     /* can_block() is false whenever the affinity lock is held -- blockability
      * must be sampled before checkout. */
-    int can_wait;
+    int can_wait = wc_linuxkm_can_block();
     wc_drbg_reseed_ctr_t cur_counter = 0;
-    struct wc_rng_bank_inst *drbg = linuxkm_get_drbg(ctx);
+    struct wc_rng_bank_inst *drbg;
+
+    if (pr && !can_wait)
+        return -EAGAIN;
+
+    drbg = linuxkm_get_drbg(ctx);
 
     if (! drbg) {
         pr_err_once("BUG: linuxkm_get_drbg() failed.\n");
@@ -2646,7 +2699,7 @@ static int wc_linuxkm_drbg_generate(struct wc_rng_bank *ctx,
     }
 
 #ifdef WC_RNG_HAVE_POOL
-    if ((slen == 0) && (dlen <= WC_LINUXKM_DRBG_SMALL_LIMIT)) {
+    if ((! pr) && (slen == 0) && (dlen <= WC_LINUXKM_DRBG_SMALL_LIMIT)) {
         word32 dlen_before_pool_extraction = dlen;
         if (wc_RNG_Pool_Extract(WC_RNG_BANK_INST_TO_RNG(drbg), dst, &dlen) == 0) {
             dst += dlen;
@@ -2658,8 +2711,6 @@ static int wc_linuxkm_drbg_generate(struct wc_rng_bank *ctx,
         }
     }
 #endif
-
-    can_wait = wc_linuxkm_can_block();
 
     if (slen > 0) {
         /* The kernel crypto API's generate-op src is additional data (cf.
@@ -2676,25 +2727,29 @@ static int wc_linuxkm_drbg_generate(struct wc_rng_bank *ctx,
         }
     }
 
-    else if (wc_RNG_DRBG_GetReseedCtr(WC_RNG_BANK_INST_TO_RNG(drbg),
-                                      &cur_counter) == 0)
-    {
+    if (pr || (wc_RNG_DRBG_GetReseedCtr(WC_RNG_BANK_INST_TO_RNG(drbg), &cur_counter) == 0)) {
 
 #ifdef WC_RNG_HAVE_NEXT_SEED
-        if ((cur_counter >= WC_LINUXKM_BONUS_RESEED_INTERVAL) &&
-            (wc_RNG_DRBG_NextSeedNow(WC_RNG_BANK_INST_TO_RNG(drbg)) == 0))
-        {
-            /* Consumed a daemon-banked seed: full reseed, counter reset, no
-             * entropy gathering, safe in any context -- nothing more to do.
-             * On any nonzero return (typically nothing banked), fall through
-             * to the direct-reseed leg below.
-             */
+        if ((! pr) && (cur_counter >= WC_LINUXKM_BONUS_RESEED_INTERVAL)) {
+            unsigned long uncredited_nonce = random_get_entropy();
+            ret = wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG_BANK_INST_TO_RNG(drbg),
+                                                (byte *)&uncredited_nonce,
+                                                (word32)sizeof uncredited_nonce);
+            ForceZero(&uncredited_nonce, (word32)sizeof uncredited_nonce);
+            if (ret == 0)
+            {
+                /* Consumed a daemon-banked seed: full reseed, counter reset, no
+                 * entropy gathering, safe in any context -- nothing more to do.
+                 * On any nonzero return (typically nothing banked), fall through
+                 * to the direct-reseed leg below.
+                 */
+                cur_counter = 0;
+            }
         }
-        else
 #endif
-        if (can_wait &&
-            (cur_counter > WC_RESEED_INTERVAL / 2))
-        {
+        if (pr || (can_wait && (cur_counter > WC_RESEED_INTERVAL / 2))) {
+            unsigned long uncredited_nonce = random_get_entropy();
+
 #ifdef WOLFSSL_USE_SAVE_VECTOR_REGISTERS
             /* carefully restore preemptibility for the reseed operation. */
 
@@ -2727,8 +2782,11 @@ static int wc_linuxkm_drbg_generate(struct wc_rng_bank *ctx,
              * unmodified (the WC_RESEED_INTERVAL backstop still governs) and marks
              * the instance out of service, exactly as an interval-forced reseed
              * failure would. */
-            ret = wc_RNG_DRBG_Reseed_Now(WC_RNG_BANK_INST_TO_RNG(drbg), NULL, 0);
+            ret = wc_RNG_DRBG_Reseed_Now(WC_RNG_BANK_INST_TO_RNG(drbg),
+                                         (byte *)&uncredited_nonce,
+                                         (word32)sizeof uncredited_nonce);
 
+            ForceZero(&uncredited_nonce, (word32)sizeof uncredited_nonce);
             if (ret != 0) {
                 pr_warn_ratelimited("WARNING: wc_RNG_DRBG_Reseed_Now() failed "
                                     "for RNG #%d: %d\n",
@@ -2889,7 +2947,7 @@ static int wc_linuxkm_drbg_generate_tfm(struct crypto_rng *tfm,
     }
 
     return wc_linuxkm_drbg_generate((struct wc_rng_bank *)crypto_rng_ctx(tfm),
-                                    src, slen, dst, dlen);
+                                    src, slen, dst, dlen, 0 /* pr */);
 }
 
 static int wc_linuxkm_drbg_seed(struct wc_rng_bank *ctx,
@@ -2993,7 +3051,7 @@ static int wc__get_random_bytes(void *buf, size_t len)
     }
     else {
         ret = wc_linuxkm_drbg_generate(current_default_wc_rng_bank,
-                                           NULL, 0, buf, (unsigned int)len);
+                                       NULL, 0, buf, (unsigned int)len, 0 /* pr */);
         (void)wc_rng_bank_default_checkin(&current_default_wc_rng_bank);
         if (ret) {
 #ifdef WOLFSSL_LINUXKM_GET_RANDOM_NO_FALLTHROUGH
@@ -3030,7 +3088,7 @@ static ssize_t wc_get_random_bytes_user(struct iov_iter *iter) {
 
         for (;;) {
             ret = wc_linuxkm_drbg_generate(current_default_wc_rng_bank,
-                                           NULL, 0, block, sizeof block);
+                                           NULL, 0, block, sizeof block, 0 /* pr */);
             if (unlikely(ret != 0)) {
 #ifdef WOLFSSL_LINUXKM_GET_RANDOM_NO_FALLTHROUGH
                 pr_emerg_ratelimited("ERROR: wc_get_random_bytes_user() wc_linuxkm_drbg_generate() returned %ld.\n", ret);
@@ -3104,7 +3162,7 @@ static ssize_t wc_extract_crng_user(void __user *buf, size_t nbytes) {
 
         for (;;) {
             ret = wc_linuxkm_drbg_generate(current_default_wc_rng_bank,
-                                           NULL, 0, block, sizeof block);
+                                           NULL, 0, block, sizeof block, 0 /* pr */);
             if (unlikely(ret != 0)) {
 #ifdef WOLFSSL_LINUXKM_GET_RANDOM_NO_FALLTHROUGH
                 pr_emerg_ratelimited("ERROR: wc_extract_crng_user() wc_linuxkm_drbg_generate() returned %ld.\n", ret);
