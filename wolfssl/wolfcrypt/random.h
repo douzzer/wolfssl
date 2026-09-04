@@ -43,6 +43,70 @@
     WOLFSSL_LOCAL int wolfCrypt_FIPS_DRBG_sanity(void);
 #endif
 
+#ifndef WC_RNG_NO_POOL
+    #ifndef WC_RNG_HAVE_POOL
+        #define WC_RNG_HAVE_POOL
+    #endif
+    #ifdef WOLFSSL_NO_ATOMICS
+        typedef word32 WC_RNG_pool_state_t;
+    #else
+        typedef wolfSSL_Atomic_Uint WC_RNG_pool_state_t;
+    #endif
+#else
+    #undef WC_RNG_HAVE_POOL
+#endif
+
+#ifndef WC_RNG_NO_RBGC
+    #if !defined(WC_RNG_HAVE_RBGC) && \
+        defined(HAVE_HASHDRBG) && \
+        !defined(CUSTOM_RAND_GENERATE_BLOCK)
+        #define WC_RNG_HAVE_RBGC
+    #endif
+#else
+    #undef WC_RNG_HAVE_RBGC
+#endif
+
+/* _FULL_MUTEX is opt-in, and depends on WC_RNG_HAVE_LOCK. */
+#ifdef WC_RNG_NO_LOCK_FULL_MUTEX
+    #undef WC_RNG_HAVE_LOCK_FULL_MUTEX
+#elif defined(WC_RNG_HAVE_LOCK_FULL_MUTEX)
+    #ifdef WC_RNG_NO_LOCK
+        #error FULL_MUTEX depends on WC_RNG_HAVE_LOCK.
+    #endif
+#endif
+
+#ifndef WC_RNG_NO_LOCK
+    #ifndef WC_RNG_HAVE_LOCK
+        #define WC_RNG_HAVE_LOCK
+    #endif
+    #ifdef WOLFSSL_NO_ATOMICS
+        typedef word32 WC_RNG_lock_t;
+        typedef word32 WC_RNG_lock_arg_t;
+    #else
+        typedef wolfSSL_Atomic_Uint WC_RNG_lock_t;
+        typedef WC_ATOMIC_UINT_ARG WC_RNG_lock_arg_t;
+    #endif
+#else
+    #undef WC_RNG_HAVE_LOCK
+#endif
+
+#if !defined(HAVE_HASHDRBG) || defined(CUSTOM_RAND_GENERATE_BLOCK) && \
+    !defined(WC_RNG_NO_NEXT_SEED)
+    #define WC_RNG_NO_NEXT_SEED
+#endif
+#ifndef WC_RNG_NO_NEXT_SEED
+    #ifndef WC_RNG_HAVE_NEXT_SEED
+        #define WC_RNG_HAVE_NEXT_SEED
+    #endif
+    #ifdef WOLFSSL_NO_ATOMICS
+        typedef sword32 WC_DRBG_nextSeedLen_t;
+    #else
+        typedef wolfSSL_Atomic_Int WC_DRBG_nextSeedLen_t;
+    #endif
+#else
+    #undef WC_RNG_HAVE_NEXT_SEED
+#endif
+
  /* Maximum generate block length */
 #ifndef RNG_MAX_BLOCK_LEN
     #ifdef HAVE_INTEL_QA
@@ -73,7 +137,7 @@
     #undef  HAVE_HASHDRBG
     #define HAVE_HASHDRBG
     #ifndef WC_RESEED_INTERVAL
-        #define WC_RESEED_INTERVAL (1000000)
+        #define WC_RESEED_INTERVAL 1000000
     #endif
 #endif
 
@@ -249,17 +313,6 @@ struct OS_Seed {
         /* Setting the default to 4. */
         #define SEED_BLOCK_SZ 4
     #endif
-
-/* In-boundary banked-next-seed support: the wc_RNG_DRBG_NextSeed*() APIs and
- * the aperture members in the DRBG state structs.  Requires native atomics for
- * the hand-off protocol. */
-#ifdef WC_RNG_NO_NEXT_SEED
-    #undef WC_RNG_HAVE_NEXT_SEED
-#elif defined(HAVE_HASHDRBG) && !defined(CUSTOM_RAND_GENERATE_BLOCK) && \
-    defined(WOLFSSL_ATOMIC_OPS)
-    #define WC_RNG_HAVE_NEXT_SEED
-#endif
-
 #endif
 
 #define WC_DRBG_SEED_BLOCK_SZ SEED_BLOCK_SZ
@@ -309,11 +362,10 @@ struct OS_Seed {
 #ifndef NO_SHA256
 
 #ifdef WC_RNG_HAVE_NEXT_SEED
-/* Length of the banked next seed: identical byte accounting to every other
- * source-fed (re)seed in the module (gather SEED_SZ + SEED_BLOCK_SZ, apply
- * the block-offset remainder). */
-#define WC_DRBG_NEXT_SEED_LEN  ((word32)(WC_DRBG_SEED_SZ + \
-                                         WC_DRBG_SEED_BLOCK_SZ))
+    /* Length of the banked next seed: identical byte accounting to other
+     * source-fed (re)seeds in the module (gather SEED_SZ + SEED_BLOCK_SZ, apply
+     * the block-offset remainder). */
+    #define WC_DRBG_NEXT_SEED_LEN (WC_DRBG_SEED_SZ + WC_DRBG_SEED_BLOCK_SZ)
 #endif
 
 struct DRBG_internal {
@@ -326,7 +378,10 @@ struct DRBG_internal {
     byte C[DRBG_SEED_LEN];
 #ifdef WC_RNG_HAVE_NEXT_SEED
     byte nextSeed[WC_DRBG_NEXT_SEED_LEN];
-    wolfSSL_Atomic_Int nextSeedLen;
+    WC_DRBG_nextSeedLen_t nextSeedLen;
+    #ifdef WC_RNG_HAVE_RBGC
+    int nextSeedRBGCStratum;
+    #endif
 #endif
     void* heap;
 #if defined(WOLFSSL_ASYNC_CRYPT) || defined(WOLF_CRYPTO_CB)
@@ -342,12 +397,19 @@ struct DRBG_internal {
 
 #ifdef WOLFSSL_DRBG_SHA512
 struct DRBG_SHA512_internal {
+    #ifdef WORD64_AVAILABLE
     word64 reseedCtr;
+    #else
+    word32 reseedCtr;
+    #endif
     byte V[DRBG_SHA512_SEED_LEN];
     byte C[DRBG_SHA512_SEED_LEN];
 #ifdef WC_RNG_HAVE_NEXT_SEED
     byte nextSeed[WC_DRBG_NEXT_SEED_LEN];
-    wolfSSL_Atomic_Int nextSeedLen;
+    WC_DRBG_nextSeedLen_t nextSeedLen;
+    #ifdef WC_RNG_HAVE_RBGC
+    int nextSeedRBGCStratum;
+    #endif
 #endif
     void* heap;
 #if defined(WOLFSSL_ASYNC_CRYPT) || defined(WOLF_CRYPTO_CB)
@@ -375,34 +437,78 @@ enum wc_RngHealthState {
     WC_DRBG_NOT_INIT =    0,
     WC_DRBG_OK =          1,
     WC_DRBG_FAILED =      2,
-    WC_DRBG_CONT_FAILED = 3,
-#ifdef WC_RNG_BANK_SUPPORT
-    WC_DRBG_BANKREF =     4, /* Marks the WC_RNG as a ref to a wc_rng_bank,
-                              * with no usable DRBG of its own.
-                              */
-    #define WC_HAVE_RNG_BANKREF
-#endif
-    WOLF_ENUM_DUMMY_LAST_ELEMENT(wc_RngHealthState)
+    WC_DRBG_CONT_FAILED = 3
 };
+
+#define WC_RNG_FLAG_NONE           0
+#define WC_RNG_FLAG_RBGC_NEXT_SEED (1U << 0)
+#define WC_RNG_FLAG_FULL_MUTEX     (1U << 1)
+#define WC_RNG_FLAG_BANKREF        (1U << 2)
+
+#ifdef WC_RNG_DEBUG_STATS
+    #ifdef WORD64_AVAILABLE
+        typedef word64 wc_rng_debug_counter_t;
+    #else
+        typedef word32 wc_rng_debug_counter_t;
+    #endif
+#endif
 
 /* RNG context */
 struct WC_RNG {
     struct OS_Seed seed;
     void* heap;
     byte status;
-    /* Set when this instance was seeded from another DRBG's output
-     * (wc_InitRng*RBGC(), wc_RNG_DRBG_ReseedRBGC()) -- an SP 800-90C chain
-     * leaf.  Sticky by policy: a leaf is never usable as a chain root, even
-     * after a subsequent reseed from the module's seed source. */
-    byte isRbgcLeaf;
+    word32 flags;
+    #ifdef WC_RNG_DEBUG_STATS
+        wc_rng_debug_counter_t _stats_total_bytes_requested;
+        wc_rng_debug_counter_t _stats_total_bytes_produced;
+        wc_rng_debug_counter_t _stats_total_requests;
+        wc_rng_debug_counter_t _stats_credited_reseeds;
+        wc_rng_debug_counter_t _stats_uncredited_reseeds;
+        wc_rng_debug_counter_t _stats_seed_failures;
+    #endif
+#ifdef WC_RNG_HAVE_RBGC
+    int RBGCStratum;
+    #ifdef WC_RNG_DEBUG_STATS
+        wc_rng_debug_counter_t _stats_RBGC_bytes_produced;
+        wc_rng_debug_counter_t _stats_RBGC_reseeds;
+    #endif
+#endif
+#ifdef WC_RNG_HAVE_LOCK
+    WC_RNG_lock_t lock;
+    #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
+    wolfSSL_Mutex mutex;
+    #endif
+    #ifdef WC_RNG_DEBUG_STATS
+        wc_rng_debug_counter_t _stats_locks_taken;
+        wc_rng_debug_counter_t _stats_locks_released;
+        wc_rng_debug_counter_t _stats_locks_refused; /* racy */
+    #endif
+#endif
+#ifdef WC_RNG_HAVE_POOL
+    byte* pool;
+    word16 poolSize;
+    WC_RNG_pool_state_t poolState;
+    #ifdef WC_RNG_DEBUG_STATS
+        wc_rng_debug_counter_t _stats_pool_bytes_produced;
+        wc_rng_debug_counter_t _stats_pool_bytes_missed;
+    #endif
+#endif
 
-#if defined(WC_RNG_BANK_SUPPORT) || defined(HAVE_HASHDRBG)
+#ifdef WC_RNG_DEBUG_STATS
+    #ifdef WC_RNG_HAVE_NEXT_SEED
+        wc_rng_debug_counter_t _stats_n_nextseed_primary;
+        wc_rng_debug_counter_t _stats_n_nextseed_RBGC;
+    #endif
+#endif
+
+#if defined(HAVE_HASHDRBG) || defined(WC_HAVE_RNG_BANKREF)
 
 #ifdef HAVE_ANONYMOUS_INLINE_AGGREGATES
     union {
 #endif
 
-    #ifdef WC_RNG_BANK_SUPPORT
+    #ifdef WC_HAVE_RNG_BANKREF
         struct wc_rng_bank *bankref;
     #endif
 
@@ -448,7 +554,7 @@ struct WC_RNG {
     };
 #endif
 
-#endif /* WC_RNG_BANK_SUPPORT || HAVE_HASHDRBG */
+#endif /* HAVE_HASHDRBG || WC_HAVE_RNG_BANKREF */
 
 #if defined(HAVE_GETPID) && !defined(WOLFSSL_NO_GETPID)
     pid_t pid;
@@ -489,8 +595,18 @@ WOLFSSL_ABI WOLFSSL_API void wc_rng_free(WC_RNG* rng);
 #ifndef WC_NO_RNG
 WOLFSSL_ABI WOLFSSL_API int  wc_InitRng(WC_RNG* rng);
 WOLFSSL_API int  wc_InitRng_ex(WC_RNG* rng, void* heap, int devId);
-WOLFSSL_API int  wc_InitRngNonce(WC_RNG* rng, byte* nonce, word32 nonceSz);
-WOLFSSL_API int  wc_InitRngNonce_ex(WC_RNG* rng, byte* nonce, word32 nonceSz,
+WOLFSSL_API int  wc_InitRngNonce(WC_RNG* rng, const byte* nonce, word32 nonceSz);
+
+#define WC_RNG_INIT_FLAGS_NONE            0
+#define WC_RNG_INIT_FLAGS_LOCK_REQUIRED   (1U << 0)
+#define WC_RNG_INIT_FLAGS_LOCK_INITIALLY  (1U << 1)
+#define WC_RNG_INIT_FLAGS_USE_FULL_MUTEX  (1U << 2)
+
+WOLFSSL_API int  wc_InitRng_ex2(WC_RNG* rng, void* heap, int devId,
+                                word32 flags);
+WOLFSSL_API int  wc_InitRngNonce_ex2(WC_RNG* rng, const byte* nonce, word32 nonceSz,
+                                     void* heap, int devId, word32 flags);
+WOLFSSL_API int  wc_InitRngNonce_ex(WC_RNG* rng, const byte* nonce, word32 nonceSz,
                                     void* heap, int devId);
 WOLFSSL_ABI WOLFSSL_API int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz);
 WOLFSSL_API int  wc_RNG_GenerateByte(WC_RNG* rng, byte* b);
@@ -501,6 +617,8 @@ WOLFSSL_API int  wc_FreeRng(WC_RNG* rng);
 #define wc_InitRng_ex(rng, h, d) NOT_COMPILED_IN
 #define wc_InitRngNonce(rng, n, s) NOT_COMPILED_IN
 #define wc_InitRngNonce_ex(rng, n, s, h, d) NOT_COMPILED_IN
+#define wc_InitRng_ex2(rng, h, d, f) NOT_COMPILED_IN
+#define wc_InitRngNonce_ex2(rng, n, s, h, d, f) NOT_COMPILED_IN
 #if defined(__ghs__) || defined(WC_NO_RNG_SIMPLE)
 /* some older compilers do not like macro function in expression */
 #define wc_RNG_GenerateBlock(rng, b, s) NOT_COMPILED_IN
@@ -520,9 +638,23 @@ WOLFSSL_API int  wc_FreeRng(WC_RNG* rng);
     WOLFSSL_API int wc_SetSeed_Cb(wc_RngSeed_Cb cb);
 #endif
 
+WOLFSSL_API int wc_RNG_GetStatus(const WC_RNG* rng);
+WOLFSSL_API int wc_RNG_DRBG_Present(const WC_RNG* rng);
+
 #ifdef HAVE_HASHDRBG
     WOLFSSL_API int wc_RNG_DRBG_Reseed(WC_RNG* rng, const byte* seed,
                                        word32 seedSz);
+    WOLFSSL_API int wc_RNG_DRBG_Reseed_Nonce(WC_RNG* rng, const byte* seed,
+                                             word32 seedSz, const byte *nonce,
+                                             word32 nonceSz);
+    WOLFSSL_API int wc_RNG_DRBG_Reseed_Uncredited(WC_RNG* rng,
+                                                  const byte* seed,
+                                                  word32 seedSz);
+    WOLFSSL_API int wc_RNG_DRBG_Reseed_Nonce_Uncredited(
+                                 WC_RNG* rng, const byte* seed, word32 seedSz,
+                                 const byte *nonce, word32 nonceSz);
+    WOLFSSL_API int wc_RNG_DRBG_Reseed_Now(WC_RNG* rng, const byte* nonce,
+                                           word32 nonceSz);
     WOLFSSL_API int wc_RNG_TestSeed(const byte* seed, word32 seedSz);
 
     /* Reseed-counter width tracks struct DRBG_internal above.  The sentinel
@@ -537,70 +669,15 @@ WOLFSSL_API int  wc_FreeRng(WC_RNG* rng);
         #endif
     #endif
 
-    /* DRBG state accessor and reseed scheduling services.  These let
-     * applications outside the module boundary (e.g. the wc_rng_bank
-     * facility) observe DRBG status and reseed scheduling, mix in uncredited
-     * material, and request reseeds, all through defined service interfaces
-     * rather than by direct access to module-internal state.  Pre-v7 FIPS
-     * boundaries lack these services; rng_bank.h supplies source-compatible
-     * fallbacks for those builds. */
-    WOLFSSL_API int wc_RNG_GetStatus(const WC_RNG* rng);
-    WOLFSSL_API int wc_RNG_DRBG_Present(const WC_RNG* rng);
-    WOLFSSL_API int wc_RNG_DRBG_IsRBGCLeaf(const WC_RNG* rng);
+#ifdef WC_RNG_HAVE_RBGC
+    WOLFSSL_API int wc_RNG_DRBG_GetRBGCStratum(const WC_RNG* rng);
+    #ifdef WC_RNG_HAVE_NEXT_SEED
+    WOLFSSL_API int wc_RNG_DRBG_GetNextSeedRBGCStratum(const WC_RNG* rng);
+    #endif
+#endif /* WC_RNG_HAVE_RBGC */
     WOLFSSL_API int wc_RNG_DRBG_GetReseedCtr(const WC_RNG* rng,
                                              wc_drbg_reseed_ctr_t* reseedCtr);
     WOLFSSL_API int wc_RNG_DRBG_ScheduleReseed(WC_RNG* rng);
-    WOLFSSL_API int wc_RNG_DRBG_Reseed_Uncredited(WC_RNG* rng,
-                                                  const byte* seed,
-                                                  word32 seedSz);
-#ifndef CUSTOM_RAND_GENERATE_BLOCK
-    WOLFSSL_API int wc_RNG_DRBG_Reseed_Now(WC_RNG* rng, const byte* nonce,
-                                           word32 nonceSz);
-
-    /* SP 800-90C RBG-chain spawn: instantiate leaf as a subordinate DRBG
-     * seeded from root's generate output.  The _New variants allocate the
-     * leaf from root's heap; release those with wc_rng_free(). */
-    WOLFSSL_API int wc_InitRngRBGC(WC_RNG* leaf, WC_RNG* root);
-    WOLFSSL_API int wc_InitRngNonceRBGC(WC_RNG* leaf, WC_RNG* root,
-                                        byte* nonce, word32 nonceSz);
-#ifndef WC_NO_CONSTRUCTORS
-    WOLFSSL_API int wc_InitRngRBGC_New(WC_RNG** leaf, WC_RNG* root);
-    WOLFSSL_API int wc_InitRngNonceRBGC_New(WC_RNG** leaf, WC_RNG* root,
-                                            byte* nonce, word32 nonceSz);
-#endif /* !WC_NO_CONSTRUCTORS */
-    WOLFSSL_API int wc_RNG_DRBG_ReseedRBGC(WC_RNG* leaf, WC_RNG* root,
-                                           const byte* nonce, word32 nonceSz);
-
-#ifdef WC_RNG_HAVE_NEXT_SEED
-    /* Banked-next-seed services.  _NextSeedGenerate() banks up to n more
-     * bytes from the module's seed source (clamped to the space remaining;
-     * ALREADY_E when the bank is ready or being consumed), health-testing
-     * and publishing the bank when it completes (RETRY_E when the health
-     * test could not run and the call should simply be retried); a
-     * scheduling daemon may call it without owning the instance.
-     * _NextSeedCurrent() reports the raw aperture value (racy snapshot).
-     * _NextSeedNow() claims a ready bank and performs a source-free
-     * credited reseed with it -- safe in atomic context -- or returns
-     * NOT_READY_E when no bank is ready; _NextSeedNow_Nonce() is the same
-     * with a nonce as uncredited additional input.  All report
-     * MISSING_RNG_E for an instance with no DRBG (RDRAND et al.).  The
-     * caller must own the instance for _NextSeedNow[_Nonce](). */
-
-    #define WC_DRBG_NEXT_SEED_EMPTY 0
-    /* All sentinel states are negative; non-negative values are banked byte
-     * counts. */
-    #define WC_DRBG_NEXT_SEED_READY ((WC_ATOMIC_INT_ARG)(-2))
-    #define WC_DRBG_NEXT_SEED_CONSUMING ((WC_ATOMIC_INT_ARG)(-1))
-
-    WOLFSSL_API int wc_RNG_DRBG_NextSeedGenerate(WC_RNG* rng, word32 n);
-    WOLFSSL_API int wc_RNG_DRBG_NextSeedCurrent(WC_RNG* rng,
-                                                WC_ATOMIC_INT_ARG* n);
-    WOLFSSL_API int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng,
-                                                   const byte* nonce,
-                                                   word32 nonceSz);
-    WOLFSSL_API int wc_RNG_DRBG_NextSeedNow(WC_RNG* rng);
-#endif /* WC_RNG_HAVE_NEXT_SEED */
-#endif
 
 #ifndef NO_SHA256
     /* SHA-256 Hash_DRBG health test entry points. SHA-512-only builds
@@ -709,6 +786,123 @@ WOLFSSL_API int  wc_FreeRng(WC_RNG* rng);
 #endif
 
 #endif /* HAVE_HASHDRBG */
+
+#ifdef WC_RNG_HAVE_RBGC
+    /* SP 800-90C RBG-chain spawn: instantiate child as a subordinate DRBG
+     * seeded from parent's generate output.  The _New variants allocate the
+     * child from parent's heap; release them with ordinary wc_rng_free(). */
+    WOLFSSL_API int wc_InitRngRBGC(WC_RNG* child, WC_RNG* parent, word32 flags);
+    WOLFSSL_API int wc_InitRngNonceRBGC(WC_RNG* child, WC_RNG* parent,
+                                        const byte* nonce, word32 nonceSz,
+                                        word32 flags);
+    #ifndef WC_NO_CONSTRUCTORS
+    /* flags are per-object (WC_RNG_INIT_FLAGS_*), deliberately NOT
+     * inherited from the parent: a child's lock policy is its own. */
+    WOLFSSL_API int wc_InitRngRBGC_New(WC_RNG** child, WC_RNG* parent,
+                                       word32 flags);
+    WOLFSSL_API int wc_InitRngNonceRBGC_New(WC_RNG** child, WC_RNG* parent,
+                                            const byte* nonce, word32 nonceSz,
+                                            word32 flags);
+    #endif /* !WC_NO_CONSTRUCTORS */
+    /* Note, only a root RNG -- stratum 0, i.e. primary-seeded -- is permitted
+     * to generate reseed bytes (wolfCrypt policy; stricter than SP 800-90C
+     * 7.1.2.2, which also permits parent reseed). */
+    WOLFSSL_API int wc_RNG_DRBG_ReseedRBGC(WC_RNG* rng, WC_RNG* root,
+                                           const byte* nonce, word32 nonceSz);
+    WOLFSSL_API int wc_RNG_DRBG_ReseedRBGC_Uncredited(WC_RNG* rng,
+                                                      WC_RNG* root,
+                                                      const byte* nonce,
+                                                      word32 nonceSz);
+#endif /* WC_RNG_HAVE_RBGC */
+
+#ifdef WC_RNG_HAVE_NEXT_SEED
+    #define WC_DRBG_NEXT_SEED_EMPTY 0
+    /* All sentinel states are negative; non-negative values are banked byte
+     * counts. */
+    #define WC_DRBG_NEXT_SEED_READY ((WC_ATOMIC_INT_ARG)(-2))
+    #define WC_DRBG_NEXT_SEED_CONSUMING ((WC_ATOMIC_INT_ARG)(-1))
+
+    WOLFSSL_API int wc_RNG_DRBG_NextSeedGenerate(WC_RNG* rng, word32 n);
+#ifdef WC_RNG_HAVE_RBGC
+    WOLFSSL_API int wc_RNG_DRBG_NextSeedGenerate_RBGC(WC_RNG* rng,
+                                                      WC_RNG *root,
+                                                      word32 n);
+#endif
+    WOLFSSL_API int wc_RNG_DRBG_NextSeedCurrent(WC_RNG* rng,
+                                                WC_ATOMIC_INT_ARG* n);
+    WOLFSSL_API int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng,
+                                                   const byte* nonce,
+                                                   word32 nonceSz);
+    WOLFSSL_API int wc_RNG_DRBG_NextSeedNow(WC_RNG* rng);
+#endif /* WC_RNG_HAVE_NEXT_SEED */
+
+#ifdef WC_RNG_HAVE_LOCK
+    #define WC_RNG_LOCK_FREE 0
+    #define WC_RNG_LOCK_HELD (1U<<0)
+    #define WC_RNG_LOCK_REQUIRED (1U<<1)
+    /* consumers' annotation bits start here (see e.g. rng_bank.h) */
+    #define WC_RNG_LOCK_EXTRA_SHIFT 2U
+
+    WOLFSSL_API int wc_RNG_lock_get(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits);
+    WOLFSSL_API int wc_RNG_lock_get_conditional(WC_RNG* rng,
+                                                WC_RNG_lock_arg_t expected_extra_bits,
+                                                WC_RNG_lock_arg_t want_extra_bits);
+    WOLFSSL_API int wc_RNG_lock_put(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits);
+    WOLFSSL_API int wc_RNG_lock_put_conditional(WC_RNG* rng,
+                                                WC_RNG_lock_arg_t expected_extra_bits,
+                                                WC_RNG_lock_arg_t want_extra_bits);
+    WOLFSSL_API int wc_RNG_lock_read(WC_RNG* rng, WC_RNG_lock_arg_t* state);
+    WOLFSSL_API int wc_RNG_lock_set_extra(WC_RNG* rng,
+                                          WC_RNG_lock_arg_t extra_bits);
+    WOLFSSL_API int wc_RNG_lock_add_extra(WC_RNG* rng,
+                                          WC_RNG_lock_arg_t extra_bits);
+    WOLFSSL_API int wc_RNG_lock_clear_extra(WC_RNG* rng,
+                                            WC_RNG_lock_arg_t extra_bits);
+
+#endif /* WC_RNG_HAVE_LOCK */
+
+#ifdef WC_RNG_HAVE_POOL
+    WOLFSSL_API int wc_RNG_Pool_Alloc(WC_RNG* rng, word32 size);
+    WOLFSSL_API int wc_RNG_Pool_Collect(WC_RNG* rng, word32 n);
+    WOLFSSL_API int wc_RNG_Pool_Collect2(WC_RNG* rng_dest, WC_RNG* rng_src,
+                                         word32 n);
+    WOLFSSL_API int wc_RNG_Pool_Extract(WC_RNG* rng, byte* out, word32* n);
+    WOLFSSL_API int wc_RNG_Pool_Current(WC_RNG* rng, word32* n);
+#endif /* WC_RNG_HAVE_POOL */
+
+#ifdef WC_RNG_DEBUG_STATS
+struct wc_rng_debug_stats_snapshot {
+    wc_rng_debug_counter_t _stats_total_bytes_requested;
+    wc_rng_debug_counter_t _stats_total_bytes_produced;
+    wc_rng_debug_counter_t _stats_total_requests;
+    wc_rng_debug_counter_t _stats_credited_reseeds;
+    wc_rng_debug_counter_t _stats_uncredited_reseeds;
+    wc_rng_debug_counter_t _stats_seed_failures;
+    wc_rng_debug_counter_t _stats_locks_taken;
+    wc_rng_debug_counter_t _stats_locks_released;
+    wc_rng_debug_counter_t _stats_locks_refused;
+#ifdef WC_RNG_HAVE_RBGC
+    wc_rng_debug_counter_t _stats_RBGC_bytes_produced;
+    wc_rng_debug_counter_t _stats_RBGC_reseeds;
+#endif
+#ifdef WC_RNG_HAVE_POOL
+    wc_rng_debug_counter_t _stats_pool_bytes_produced;
+    wc_rng_debug_counter_t _stats_pool_bytes_missed;
+#endif
+#ifdef WC_RNG_HAVE_NEXT_SEED
+    wc_rng_debug_counter_t _stats_n_nextseed_primary;
+    wc_rng_debug_counter_t _stats_n_nextseed_RBGC;
+#endif
+};
+
+WOLFSSL_API int wc_rng_debug_stats_snap(struct wc_rng_debug_stats_snapshot *s,
+                                        const WC_RNG *rng);
+WOLFSSL_API int wc_rng_debug_stats_restore(
+    const struct wc_rng_debug_stats_snapshot *s,
+    WC_RNG *rng);
+WOLFSSL_API int wc_rng_debug_stats_sum(struct wc_rng_debug_stats_snapshot *s,
+                                       const WC_RNG *rng);
+#endif /* WC_RNG_DEBUG_STATS */
 
 #ifdef __cplusplus
     } /* extern "C" */
