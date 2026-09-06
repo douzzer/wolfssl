@@ -1221,7 +1221,7 @@ WOLFSSL_API int wc_rng_bank_checkin(
             "wc_rng_bank_checkin(): wc_rng_bank_inst_lock_put() returned code %d "
             "(lock state 0x%x).\n", ret, lockval);
 #endif
-        if (ret == OBJECT_NOT_LOCKED_E)
+        if (ret == WC_NO_ERR_TRACE(OBJECT_NOT_LOCKED_E))
             return ret;
         /* else NEEDS_RECOVERY_E -- proceed with check-in. */
     }

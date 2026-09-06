@@ -316,16 +316,21 @@ static WC_MAYBE_UNUSED WC_INLINE int rng_lock_required_check(WC_RNG* rng)
 #else /* WC_RNG_HAVE_LOCK */
     else {
     #ifdef WOLFSSL_NO_ATOMICS
-        int lock_state = rng->lock;
+        WC_RNG_lock_t lock_state = rng->lock;
     #else
         WC_RNG_lock_arg_t lock_state = WOLFSSL_ATOMIC_LOAD(rng->lock);
     #endif
-        if (! (lock_state & WC_RNG_LOCK_HELD)) {
-            if (lock_state & WC_RNG_LOCK_REQUIRED)
-                return OBJECT_NOT_LOCKED_E;
-            else if (lock_state & WC_RNG_LOCK_ENTROPY_INVALIDATED)
-                return NEEDS_RECOVERY_E;
+        if ((lock_state & WC_RNG_LOCK_REQUIRED) &&
+            (! (lock_state & WC_RNG_LOCK_HELD)))
+        {
+            return OBJECT_NOT_LOCKED_E;
         }
+        /* WC_RNG_LOCK_ENTROPY_INVALIDATED deliberately does not gate entry
+         * here: on lock-required instances the lock API refuses new leases,
+         * and on unlocked instances the saturated reseedCtr (see
+         * wc_RNG_invalidate_entropy()) forces a credited reseed -- which
+         * clears the flag -- before the next generate.  Refusing here would
+         * brick unlocked instances, with no path to recovery. */
         return 0;
     }
 #endif /* WC_RNG_HAVE_LOCK */
@@ -786,13 +791,16 @@ static int Hash_DRBG_Reseed(WC_RNG* rng, const byte* seed, word32 seedSz,
                             int credited)
 {
     int ret;
-#if defined(WC_RNG_HAVE_LOCK) && \
-    (defined(WC_RNG_HAVE_POOL) || defined(WC_RNG_HAVE_NEXT_SEED))
-    WC_RNG_lock_arg_t cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
+#ifdef WC_RNG_HAVE_LOCK
+    WC_RNG_lock_arg_t cur_lock;
 #endif
 
     if (rng == NULL)
         return BAD_FUNC_ARG;
+
+#ifdef WC_RNG_HAVE_LOCK
+    cur_lock = WOLFSSL_ATOMIC_LOAD(rng->lock);
+#endif
 
 #if defined(WC_RNG_HAVE_LOCK) && defined(WC_RNG_HAVE_POOL)
     WOLFSSL_ATOMIC_STORE(rng->poolState, 0);

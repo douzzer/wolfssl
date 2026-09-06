@@ -493,7 +493,7 @@ static WC_INLINE int wc_rng_bank_inst_lock_put(struct wc_rng_bank_inst *inst)
         return BAD_FUNC_ARG;
     cur_lock = WOLFSSL_ATOMIC_LOAD(inst->lock);
     if (! (cur_lock & WC_RNG_LOCK_HELD))
-        return BAD_STATE_E;
+        return OBJECT_NOT_LOCKED_E;
     /* unconditional release, preserving only the sticky bit */
     WOLFSSL_ATOMIC_STORE(inst->lock, cur_lock & WC_RNG_LOCK_REQUIRED);
     return 0;
@@ -515,7 +515,7 @@ static WC_INLINE WC_MAYBE_UNUSED int wc_rng_bank_inst_lock_put_conditional(struc
     }
     /* conditional release failed: the caller is still the holder, at both
      * layers -- the mutex stays held. */
-    return BAD_STATE_E;
+    return UNEXPECTED_STATE_E;
 }
 
 static WC_INLINE int wc_rng_bank_inst_lock_read(struct wc_rng_bank_inst *inst, WC_RNG_lock_arg_t* state)
