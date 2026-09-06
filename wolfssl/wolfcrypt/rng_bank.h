@@ -123,7 +123,8 @@
     #define WC_RNG_LOCK_FREE 0
     #define WC_RNG_LOCK_HELD (1U<<0)
     #define WC_RNG_LOCK_REQUIRED (1U<<1)
-    #define WC_RNG_LOCK_EXTRA_SHIFT 2U
+    #define WC_RNG_LOCK_ENTROPY_INVALIDATED (1U<<2)
+    #define WC_RNG_LOCK_EXTRA_SHIFT 3U
     #ifdef WOLFSSL_NO_ATOMICS
         typedef word32 WC_RNG_lock_t;
         typedef word32 WC_RNG_lock_arg_t;
@@ -464,7 +465,6 @@ WOLFSSL_API int wc_rng_new_bankref(struct wc_rng_bank *bank, WC_RNG **rng);
     static WC_INLINE int wc_rng_bank_inst_lock_clear_extra(struct wc_rng_bank_inst *inst, WC_RNG_lock_arg_t extra_bits) {
         return wc_RNG_lock_clear_extra(WC_RNG_BANK_INST_TO_RNG(inst), extra_bits);
     }
-
 
 #else /* !WC_RNG_HAVE_LOCK */
 

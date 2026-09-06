@@ -1202,18 +1202,10 @@ WOLFSSL_API int wc_rng_bank_checkin(
 
     ret = rng_inst_matches_bank(bank, *rng_inst);
     if (ret < 0) {
-        /* Nothing can be released here: the instance the caller actually holds
-         * can't be identified from a pointer that isn't in this bank, so its
-         * lock and the bank refcount stay held and wc_rng_bank_fini() will
-         * report BUSY_E/BAD_STATE_E until the caller checks in correctly.
-         *
-         * We can't normally warn for this misuse because random_bank_test()
-         * exercises the functionality.
-         */
 #ifdef WC_RNG_BANK_LOCK_DEBUG
         WOLFSSL_DEBUG_PRINTF(
             "BUG: wc_rng_bank_checkin() with an instance that is not in this "
-            "bank; caller's lock and bank refcount remain held.\n");
+            "bank; caller's lock and bank refcount (if any) remain held.\n");
 #endif
         return ret;
     }
@@ -1222,39 +1214,17 @@ WOLFSSL_API int wc_rng_bank_checkin(
     if (ret < 0)
         return ret;
 
-    /* Opportunistically check for lock misuse/corruption.
-     *
-     * An instance must be checked in exactly once, by the caller that checked
-     * it out. A duplicate or cross-thread check-in double-releases the affinity
-     * lock (double migrate_enable() in linuxkm) and double-decrements the bank
-     * refcount.  In normal builds we detect sequential misuse -- duplicate or
-     * stale checkins ordered after the release -- with a cheap check that the
-     * lock has WC_RNG_BANK_INST_LOCK_HELD.  In WC_RNG_BANK_LOCK_DEBUG builds,
-     * the release is the more expensive compare-and-exchange, which catches
-     * both sequential misuses and concurrent duplicates (short of ABA reuse of
-     * the slot within the race window).
-     */
-    if (! (lockval & WC_RNG_LOCK_HELD)) {
+    ret = wc_rng_bank_inst_lock_put(*rng_inst);
+    if (ret != 0) {
 #ifdef WC_RNG_BANK_LOCK_DEBUG
         WOLFSSL_DEBUG_PRINTF(
-            "BUG: wc_rng_bank_checkin() on an instance that is not checked "
-            "out (lock %d).\n", lockval);
+            "wc_rng_bank_checkin(): wc_rng_bank_inst_lock_put() returned code %d "
+            "(lock state 0x%x).\n", ret, lockval);
 #endif
-        return BAD_STATE_E;
+        if (ret == OBJECT_NOT_LOCKED_E)
+            return ret;
+        /* else NEEDS_RECOVERY_E -- proceed with check-in. */
     }
-
-#ifdef WC_RNG_BANK_LOCK_DEBUG
-    if (wc_rng_bank_inst_lock_put_conditional(*rng_inst, lockval) != 0) {
-        WC_RNG_lock_arg_t cur_state = 0;
-        (void)wc_rng_bank_inst_lock_read(*rng_inst, &cur_state);
-        WOLFSSL_DEBUG_PRINTF(
-            "BUG: wc_rng_bank_checkin() lock changed under it "
-            "(0x%x -> 0x%x).\n", lockval, cur_state);
-        return BAD_STATE_E;
-    }
-#else /* !WC_RNG_BANK_LOCK_DEBUG */
-    (void)wc_rng_bank_inst_lock_put(*rng_inst);
-#endif /* !WC_RNG_BANK_LOCK_DEBUG */
 
     *rng_inst = NULL;
 
@@ -1262,9 +1232,7 @@ WOLFSSL_API int wc_rng_bank_checkin(
         REENABLE_VECTOR_REGISTERS();
 
     if (lockval & WC_RNG_BANK_INST_LOCK_AFFINITY_LOCKED)
-        ret = bank->affinity_unlock_cb(bank->cb_arg);
-    else
-        ret = 0;
+        (void)bank->affinity_unlock_cb(bank->cb_arg);
 
     if (! (bank->flags & WC_RNG_BANK_FLAG_NO_CHECKOUT_REFCOUNTING)) {
         WC_ATOMIC_INT_ARG new_refcount;
@@ -1953,8 +1921,8 @@ WOLFSSL_API int wc_rng_bank_reseed_range(struct wc_rng_bank *bank,
                     if (ts2 - ts1 > timeout_secs) {
 #ifdef WC_VERBOSE_RNG
                         WOLFSSL_DEBUG_PRINTF(
-                            "ERROR: timeout after attempted reseed by "
-                            "wc_RNG_GenerateBlock() for DRBG #%d, err %d.", n, ret);
+                            "ERROR: timeout trying wc_RNG_DRBG_Reseed_Now() "
+                            "for DRBG #%d, err %d.", n, ret);
 #endif
                         ret = WC_TIMEOUT_E;
                         break;

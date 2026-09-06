@@ -27494,11 +27494,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t random_bank_test(void)
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
         ret = wc_rng_bank_checkin(bank, &stale_inst);
-        if (ret != WC_NO_ERR_TRACE(BAD_STATE_E))
-            ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+        if (ret != WC_NO_ERR_TRACE(OBJECT_NOT_LOCKED_E))
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
         ret = wc_rng_bank_inst_checkin(&stale_inst);
-        if (ret != WC_NO_ERR_TRACE(BAD_STATE_E))
-            ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+        if (ret != WC_NO_ERR_TRACE(OBJECT_NOT_LOCKED_E))
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
         ret = wc_rng_bank_inst_checkin(&held_inst);
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);

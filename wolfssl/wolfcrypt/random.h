@@ -840,8 +840,9 @@ WOLFSSL_API int wc_RNG_DRBG_Present(const WC_RNG* rng);
     #define WC_RNG_LOCK_FREE 0
     #define WC_RNG_LOCK_HELD (1U<<0)
     #define WC_RNG_LOCK_REQUIRED (1U<<1)
+    #define WC_RNG_LOCK_ENTROPY_INVALIDATED (1U<<2)
     /* consumers' annotation bits start here (see e.g. rng_bank.h) */
-    #define WC_RNG_LOCK_EXTRA_SHIFT 2U
+    #define WC_RNG_LOCK_EXTRA_SHIFT 3U
 
     WOLFSSL_API int wc_RNG_lock_get(WC_RNG* rng, WC_RNG_lock_arg_t extra_bits);
     WOLFSSL_API int wc_RNG_lock_get_conditional(WC_RNG* rng,
@@ -858,6 +859,7 @@ WOLFSSL_API int wc_RNG_DRBG_Present(const WC_RNG* rng);
                                           WC_RNG_lock_arg_t extra_bits);
     WOLFSSL_API int wc_RNG_lock_clear_extra(WC_RNG* rng,
                                             WC_RNG_lock_arg_t extra_bits);
+    WOLFSSL_API int wc_RNG_invalidate_entropy(WC_RNG* rng);
 
 #endif /* WC_RNG_HAVE_LOCK */
 
