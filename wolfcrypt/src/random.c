@@ -256,6 +256,11 @@ This library contains implementation for the random number generator.
     }
 #endif
 
+static WARN_UNUSED_RESULT int wc_local_RNG_GenerateBlock(WC_RNG* rng,
+                                                         byte* output,
+                                                         word32 sz,
+                                                         int get_op_lock);
+
 #if defined(HAVE_INTEL_RDRAND) || defined(HAVE_INTEL_RDSEED) || \
     defined(HAVE_AMD_RDSEED)
     static cpuid_flags_t intel_flags = WC_CPUID_INITIALIZER;
@@ -368,6 +373,30 @@ int wc_RNG_DRBG_Present(const WC_RNG* rng)
 #ifdef WC_RNG_HAVE_POOL
 static WARN_UNUSED_RESULT int PoolPurge(WC_RNG* rng);
 #endif
+
+static WC_INLINE int RngOpLockEnter(WC_RNG* rng) {
+#ifndef WC_RNG_HAVE_OP_MUTEX
+    (void)rng;
+#else
+    if (rng == NULL)
+        return BAD_FUNC_ARG;
+    if (rng->flags & WC_RNG_FLAG_OP_MUTEX)
+        return wc_LockMutex(&rng->mutex);
+    else
+#endif
+        return 0;
+}
+
+static WC_INLINE void RngOpLockExit(WC_RNG* rng) {
+#ifndef WC_RNG_HAVE_OP_MUTEX
+    (void)rng;
+#else
+    if (rng == NULL)
+        return;
+    if (rng->flags & WC_RNG_FLAG_OP_MUTEX)
+        wc_UnLockMutex(&rng->mutex);
+#endif
+}
 
 /* Start NIST DRBG code */
 #ifdef HAVE_HASHDRBG
@@ -1150,8 +1179,13 @@ int wc_RNG_DRBG_Reseed_Nonce(WC_RNG* rng, const byte* seed, word32 seedSz,
     }
 #endif /* WC_RNG_HAVE_LOCK */
 
+    ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
     ret = Hash_DRBG_Reseed(rng, seed, seedSz, nonce, nonceSz,
                            0 /* in_bracketed_consume */);
+    RngOpLockExit(rng);
+
 #ifdef WC_RNG_HAVE_RBGC
     if (ret == 0) {
         /* User-supplied entropy is of unknown provenance.  In RBGC builds,
@@ -1259,10 +1293,11 @@ int wc_RNG_DRBG_GetReseedCtr(const WC_RNG* rng,
  * remaining lifetime, never extend it.  When no DRBG is instantiated (RDRAND et
  * al.) commanded reseed is not supported and the call returns
  * WRONG_TYPE_OBJECT_E. */
-int wc_RNG_DRBG_ScheduleReseed(WC_RNG* rng)
+static int DRBG_ScheduleReseed_local(WC_RNG* rng)
 {
     if (rng == NULL)
         return BAD_FUNC_ARG;
+
 #ifndef NO_SHA256
     if ((rng->drbgType == WC_DRBG_SHA256) && (rng->drbg != NULL)) {
         ((DRBG_internal *)rng->drbg)->reseedCtr =
@@ -1278,6 +1313,22 @@ int wc_RNG_DRBG_ScheduleReseed(WC_RNG* rng)
     }
 #endif
     return WRONG_TYPE_OBJECT_E;
+}
+
+int wc_RNG_DRBG_ScheduleReseed(WC_RNG* rng)
+{
+    int ret;
+
+    if (rng == NULL)
+        return BAD_FUNC_ARG;
+
+    ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
+    ret = DRBG_ScheduleReseed_local(rng);
+    RngOpLockExit(rng);
+
+    return ret;
 }
 
 /* Generic byte-array helper -- shared by both SHA-256 and SHA-512 DRBG
@@ -2302,6 +2353,8 @@ int wc_RNG_DRBG_Stir_Nonce(WC_RNG* rng,
                                         const byte* seed, word32 seedSz,
                                         const byte *nonce, word32 nonceSz)
 {
+    int ret;
+
     if (rng == NULL || seed == NULL)
         return BAD_FUNC_ARG;
     if ((nonce == NULL) && (nonceSz != 0))
@@ -2316,16 +2369,21 @@ int wc_RNG_DRBG_Stir_Nonce(WC_RNG* rng,
             return lock_ret;
     }
 
-    {
-        int ret = Hash_DRBG_StirGenerate(rng, seed, seedSz);
-        if ((ret == 0) && (nonce != NULL) && (nonceSz > 0)) {
-            /* Second chunk as its own specified generate: additional
-             * input is per-call, and chunking beats concatenation
-             * scratch. */
-            ret = Hash_DRBG_StirGenerate(rng, nonce, nonceSz);
-        }
+    ret = RngOpLockEnter(rng);
+    if (ret != 0)
         return ret;
+    ret = Hash_DRBG_StirGenerate(rng, seed, seedSz);
+
+    if ((ret == 0) && (nonce != NULL) && (nonceSz > 0)) {
+        /* Second chunk as its own specified generate: additional
+         * input is per-call, and chunking beats concatenation
+         * scratch. */
+        ret = Hash_DRBG_StirGenerate(rng, nonce, nonceSz);
     }
+
+    RngOpLockExit(rng);
+
+    return ret;
 }
 
 int wc_RNG_DRBG_Stir(WC_RNG* rng, const byte* seed, word32 seedSz)
@@ -2631,6 +2689,30 @@ static WARN_UNUSED_RESULT int _InitRng(WC_RNG* rng,
 #ifndef WC_RNG_HAVE_LOCK_FULL_MUTEX
     if (flags & WC_RNG_INIT_FLAG_USE_FULL_MUTEX)
         return NOT_COMPILED_IN;
+#endif
+#ifndef WC_RNG_HAVE_OP_MUTEX
+    if (flags & WC_RNG_INIT_FLAG_USE_OP_MUTEX)
+        return NOT_COMPILED_IN;
+#endif
+
+#ifdef WC_RNG_USE_OP_MUTEX_BY_DEFAULT
+    flags |= WC_RNG_INIT_FLAG_USE_OP_MUTEX;
+#endif
+
+    if ((flags & WC_RNG_INIT_FLAG_USE_FULL_MUTEX) &&
+        (flags & WC_RNG_INIT_FLAG_USE_OP_MUTEX))
+    {
+        return BAD_FUNC_ARG;
+    }
+
+#ifndef WC_RNG_HAVE_LOCK
+    /* with _OP_MUTEX but no rng->lock word, there's nothing to lock
+     * initially. */
+    if ((flags & WC_RNG_INIT_FLAG_USE_OP_MUTEX) &&
+        (flags & WC_RNG_INIT_FLAG_LOCK_INITIALLY))
+    {
+        return BAD_FUNC_ARG;
+    }
 #endif
 
 #ifdef WC_RNG_HAVE_LOCK
@@ -3082,25 +3164,32 @@ static WARN_UNUSED_RESULT int _InitRng(WC_RNG* rng,
         rng->flags |= WC_RNG_FLAG_RECOVER_AND_PROMOTE_FROM_NEXT_SEED;
     }
 #endif
-    if ((ret == 0) && (flags & WC_RNG_INIT_FLAG_USE_FULL_MUTEX)) {
-#ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
+#if defined(WC_RNG_HAVE_LOCK_FULL_MUTEX) || defined(WC_RNG_HAVE_OP_MUTEX)
+    if ((ret == 0) &&
+        (flags & (WC_RNG_INIT_FLAG_USE_FULL_MUTEX | WC_RNG_INIT_FLAG_USE_OP_MUTEX)))
+    {
         /* deliberately the last init step: no failure path can strand an
          * initialized mutex. */
         ret = wc_InitMutex(&rng->mutex);
         if (ret == 0) {
-            rng->flags |= WC_RNG_FLAG_FULL_MUTEX;
-            if (flags & WC_RNG_INIT_FLAG_LOCK_INITIALLY) {
+            if (flags & WC_RNG_INIT_FLAG_USE_FULL_MUTEX)
+                rng->flags |= WC_RNG_FLAG_FULL_MUTEX;
+            else
+                rng->flags |= WC_RNG_FLAG_OP_MUTEX;
+            if ((flags & WC_RNG_INIT_FLAG_LOCK_INITIALLY) &&
+                (! (flags & WC_RNG_INIT_FLAG_USE_OP_MUTEX)))
+            {
                 /* born held at both layers: the constructor's caller holds
                  * the whole latch, mutex included. */
                 ret = wc_LockMutex(&rng->mutex);
             }
         }
-#endif
     }
+#endif
 
     if (ret != 0) {
-    #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
-        if (rng->flags & WC_RNG_FLAG_FULL_MUTEX) {
+    #if defined(WC_RNG_HAVE_LOCK_FULL_MUTEX) || defined(WC_RNG_HAVE_OP_MUTEX)
+        if (rng->flags & (WC_RNG_FLAG_FULL_MUTEX | WC_RNG_FLAG_OP_MUTEX)) {
             /* covers wc_LockMutex() failure after successful
              * wc_InitMutex() (WC_RNG_INIT_FLAG_LOCK_INITIALLY). */
             (void)wc_FreeMutex(&rng->mutex);
@@ -3723,6 +3812,10 @@ WOLFSSL_API int wc_RNG_invalidate_entropy(WC_RNG* rng) {
     if (rng == NULL)
         return BAD_FUNC_ARG;
 
+    ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
+
     /* If no lock is held, either the RNG is in use without a lock, in which
      * case the reseedCtr is the only way to force invalidation semantics on the
      * user, or it is not in use at all and scheduling a reseed is harmless.
@@ -3736,7 +3829,7 @@ WOLFSSL_API int wc_RNG_invalidate_entropy(WC_RNG* rng) {
      * concurrent recovery attempts, in Hash_DRBG_Reseed() (the sole recovery
      * path from _ENTROPY_INVALIDATED).
      */
-    ret = wc_RNG_DRBG_ScheduleReseed(rng);
+    ret = DRBG_ScheduleReseed_local(rng);
     if (ret == WC_NO_ERR_TRACE(WRONG_TYPE_OBJECT_E)) {
         /* No DRBG (direct-RDRAND et al.): nothing to schedule, and nothing
          * whose staleness the latch would mark -- not a condemnable
@@ -3824,6 +3917,8 @@ WOLFSSL_API int wc_RNG_invalidate_entropy(WC_RNG* rng) {
      */
     if (ret != 0)
         rng->status = DRBG_FAILED;
+
+    RngOpLockExit(rng);
 
     return ret;
 }
@@ -4776,6 +4871,10 @@ static WARN_UNUSED_RESULT int wc_RNG_DRBG_NextSeedGenerate_local(
             return SEQ_OVERFLOW_E;
         else if (root->RBGCStratum == WC_RNG_RBGC_USER_SEED_STRATUM - 1)
             return SEQ_OVERFLOW_E;
+
+        ret = RngOpLockEnter(root);
+        if (ret != 0)
+            return ret;
 #else
         return NOT_COMPILED_IN;
 #endif
@@ -4788,6 +4887,8 @@ static WARN_UNUSED_RESULT int wc_RNG_DRBG_NextSeedGenerate_local(
                            &nextSeedRBGCStratum_p);
     if (ret != 0) {
         /* No DRBG instantiated -- nothing to bank (RDRAND et al.). */
+        if (root)
+            RngOpLockExit(root);
         return ret;
     }
 
@@ -4823,10 +4924,14 @@ static WARN_UNUSED_RESULT int wc_RNG_DRBG_NextSeedGenerate_local(
                  * retryable on a later banking cycle.  Traced: the
                  * competing producer -- typically the entropy daemon
                  * -- is the diagnosis a surprised caller needs. */
+                if (root)
+                    RngOpLockExit(root);
                 return BUSY_E;
             }
             if (cur < 0) {
                 /* Ready or consuming -- nothing to do. */
+                if (root)
+                    RngOpLockExit(root);
                 return WC_NO_ERR_TRACE(ALREADY_E); /* not an error */
             }
             WC_CAS_WITH_RETRY_LOOP_FOREVER(wolfSSL_Atomic_Int_CompareExchange,
@@ -4839,6 +4944,8 @@ static WARN_UNUSED_RESULT int wc_RNG_DRBG_NextSeedGenerate_local(
              * nothing moved.  Proceeding would fill and adjudicate an
              * unclaimed aperture -- the torn-claims disease the
              * producer mutex exists to prevent. */
+            if (root)
+                RngOpLockExit(root);
             return claim_ret;
         }
         if (cur == (WC_ATOMIC_INT_ARG)nextSeedSz) {
@@ -4870,7 +4977,8 @@ static WARN_UNUSED_RESULT int wc_RNG_DRBG_NextSeedGenerate_local(
             if (n > nextSeedSz - (word32)cur)
                 n = nextSeedSz - (word32)cur;
 
-            ret = wc_RNG_GenerateBlock(root, seed + cur, n);
+            ret = wc_local_RNG_GenerateBlock(root, seed + cur, n, 0 /* get_lock_op */);
+            RngOpLockExit(root);
             if (ret != 0) {
                 /* Partial bank preserved -- retry on a later cycle.
                  * (If a purge landed meanwhile, the release discards
@@ -5122,7 +5230,7 @@ int wc_RNG_DRBG_NextSeedCurrent(WC_RNG* rng, WC_ATOMIC_INT_ARG* n)
  * attempt, success or failure.  Note that a banked reseed can never provide SP
  * 800-90 prediction resistance (the material predates the request by
  * construction); wc_RNG_DRBG_Reseed_Now() remains the live-gather shape. */
-int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng, const byte* nonce,
+static int DRBG_NextSeedNow_local(WC_RNG* rng, const byte* nonce,
                                   word32 nonceSz)
 {
     byte* seed;
@@ -5177,7 +5285,7 @@ int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng, const byte* nonce,
      * word), and if it entered invalidated and ran undisturbed it has already
      * cleared the latch -- so compensate: re-latch, and re-saturate the counter
      * (the stale credited reseed reset it, leaving the latch as sole
-     * enforcement; wc_RNG_DRBG_ScheduleReseed() restores the second layer --
+     * enforcement; DRBG_ScheduleReseed() restores the second layer --
      * race-free here, under the exclusive lease).  Claims (stats, stratum
      * adoption) are made only behind a successful release.  Do NOT re-run
      * wc_RNG_invalidate_entropy() here: the event's purges already ran, and
@@ -5214,9 +5322,10 @@ int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng, const byte* nonce,
             }
     #endif
             {
-                int sched_ret = wc_RNG_DRBG_ScheduleReseed(rng);
-                if ((ret == DRBG_SUCCESS) && (sched_ret != 0))
+                int sched_ret = DRBG_ScheduleReseed_local(rng);
+                if ((ret == DRBG_SUCCESS) && (sched_ret != 0)) {
                     return sched_ret;
+                }
             }
             if (ret == DRBG_SUCCESS) {
                 /* The discarded recovery is the whole story. */
@@ -5266,8 +5375,24 @@ int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng, const byte* nonce,
     return ret;
 }
 
+int wc_RNG_DRBG_NextSeedNow_Nonce(WC_RNG* rng, const byte* nonce,
+                                  word32 nonceSz)
+{
+    int ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
+    ret = DRBG_NextSeedNow_local(rng, nonce, nonceSz);
+    RngOpLockExit(rng);
+    return ret;
+}
+
 int wc_RNG_DRBG_NextSeedNow(WC_RNG* rng) {
-    return wc_RNG_DRBG_NextSeedNow_Nonce(rng, NULL, 0);
+    int ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
+    ret = DRBG_NextSeedNow_local(rng, NULL, 0);
+    RngOpLockExit(rng);
+    return ret;
 }
 
 /* Deposit raw uncredited stir material into rng's accumulator.  Callable
@@ -5295,7 +5420,7 @@ int wc_RNG_DRBG_NextStirStore(WC_RNG* rng,
  * Use-once: the material is consumed (accumulation reopens) whether or not
  * the reseed succeeds.  The buffer is never zeroized (racy against
  * depositors, and zeroing is always a net entropy loss). */
-int wc_RNG_DRBG_NextStirNow(WC_RNG* rng)
+static int DRBG_NextStirNow_local(WC_RNG* rng)
 {
     byte* seed;
     wolfSSL_Atomic_Int* lenp;
@@ -5361,19 +5486,24 @@ int wc_RNG_DRBG_NextStirNow(WC_RNG* rng)
     return ret;
 }
 
+int wc_RNG_DRBG_NextStirNow(WC_RNG* rng) {
+    int ret = RngOpLockEnter(rng);
+    if (ret != 0)
+        return ret;
+    ret = DRBG_NextStirNow_local(rng);
+    RngOpLockExit(rng);
+    return ret;
+}
+
 #endif /* WC_RNG_HAVE_NEXT_SEED */
 
 #endif /* HAVE_HASHDRBG */
 
 /* place a generated block in output */
-#ifdef WC_HAVE_RNG_BANKREF
 static WARN_UNUSED_RESULT int wc_local_RNG_GenerateBlock(WC_RNG* rng,
                                                          byte* output,
-                                                         word32 sz)
-#else
-WOLFSSL_ABI
-int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
-#endif
+                                                         word32 sz,
+                                                         int get_op_lock)
 {
     int ret;
 
@@ -5400,11 +5530,17 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
 #endif
 
 #ifdef HAVE_INTEL_RDRAND
-    if (IS_INTEL_RDRAND(intel_flags))
+    if (IS_INTEL_RDRAND(intel_flags)) {
+        /* Note, no RngOpLockEnter() -- RDRAND is intrinsically thread safe,
+         * each execution returns an independent hardware-generated value; no
+         * instance state is touched. */
         return wc_GenerateRand_IntelRD(NULL, output, sz);
+    }
 #endif
 
 #if defined(WOLFSSL_SILABS_SE_ACCEL) && defined(WOLFSSL_SILABS_TRNG)
+    /* Note, no RngOpLockEnter() -- silabs_GenerateRand() is responsible for
+     * thread safety, which cannot be enforced from here in any case. */
     return silabs_GenerateRand(output, sz);
 #endif
 
@@ -5412,9 +5548,25 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
     if (rng->asyncDev.marker == WOLFSSL_ASYNC_MARKER_RNG) {
         /* these are blocking */
     #ifdef HAVE_CAVIUM
-        return NitroxRngGenerateBlock(rng, output, sz);
+        if (get_op_lock) {
+            ret = RngOpLockEnter(rng);
+            if (ret != 0)
+                return ret;
+        }
+        ret = NitroxRngGenerateBlock(rng, output, sz);
+        if (get_op_lock)
+            RngOpLockExit(rng);
+        return ret;
     #elif defined(HAVE_INTEL_QA) && defined(QAT_ENABLE_RNG)
-        return IntelQaDrbg(&rng->asyncDev, output, sz);
+        if (get_op_lock) {
+            ret = RngOpLockEnter(rng);
+            if (ret != 0)
+                return ret;
+        }
+        ret = IntelQaDrbg(&rng->asyncDev, output, sz);
+        if (get_op_lock)
+            RngOpLockExit(rng);
+        return ret;
     #else
         /* simulator not supported */
     #endif
@@ -5423,7 +5575,14 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
 
 #ifdef CUSTOM_RAND_GENERATE_BLOCK
     XMEMSET(output, 0, sz);
+    if (get_op_lock) {
+        ret = RngOpLockEnter(rng);
+        if (ret != 0)
+            return ret;
+    }
     ret = (int)CUSTOM_RAND_GENERATE_BLOCK(output, sz);
+    if (get_op_lock)
+        RngOpLockExit(rng);
     #ifdef WC_VERBOSE_RNG
     if (ret != 0)
         WOLFSSL_DEBUG_PRINTF(
@@ -5435,8 +5594,17 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
     if (sz > RNG_MAX_BLOCK_LEN)
         return BAD_FUNC_ARG;
 
-    if (rng->status != DRBG_OK)
+    if (get_op_lock) {
+        ret = RngOpLockEnter(rng);
+        if (ret != 0)
+            return ret;
+    }
+
+    if (rng->status != DRBG_OK) {
+        if (get_op_lock)
+            RngOpLockExit(rng);
         return RNG_FAILURE_E;
+    }
 
 #ifdef WC_RNG_DEBUG_STATS
     ++rng->_stats_total_requests;
@@ -5445,8 +5613,11 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
 
 #if defined(HAVE_GETPID) && !defined(WOLFSSL_NO_GETPID)
     ret = rng_pid_change_check(rng);
-    if (ret != 0)
+    if (ret != 0) {
+        if (get_op_lock)
+            RngOpLockExit(rng);
         return ret;
+    }
 #endif
 
 #if defined(WC_RNG_HAVE_NEXT_SEED) && defined(WC_RNG_HAVE_LOCK) && \
@@ -5466,8 +5637,10 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
                 ||
                 ((rng->RBGCStratum > 0) && (banked_stratum == 0)))
             {
-                if (wc_RNG_DRBG_NextSeedNow(rng) != 0) {
+                if (DRBG_NextSeedNow_local(rng, NULL, 0) != 0) {
                     rng->status = DRBG_FAILED;
+                    if (get_op_lock)
+                        RngOpLockExit(rng);
                     return RNG_FAILURE_E;
                 }
             }
@@ -5500,9 +5673,11 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
         }
 #endif
         if (stir_ready) {
-            int stir_ret = wc_RNG_DRBG_NextStirNow(rng);
+            int stir_ret = DRBG_NextStirNow_local(rng);
             if (stir_ret == WC_NO_ERR_TRACE(RNG_FAILURE_E)) {
                 /* The DRBG broke while we were stirring it. */
+                if (get_op_lock)
+                    RngOpLockExit(rng);
                 return stir_ret;
             }
         }
@@ -5513,6 +5688,8 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
     if (WOLFSSL_ATOMIC_LOAD(rng->lock) & WC_RNG_LOCK_ENTROPY_INVALIDATED) {
         if (PollAndReSeed(rng, NULL, 0) != DRBG_SUCCESS) {
             rng->status = DRBG_FAILED;
+            if (get_op_lock)
+                RngOpLockExit(rng);
             return RNG_FAILURE_E;
         }
     }
@@ -5568,9 +5745,13 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
         ret = RNG_FAILURE_E;
         rng->status = DRBG_FAILED;
     }
+    if (get_op_lock)
+        RngOpLockExit(rng);
+
 #else
 
     /* if we get here then there is an RNG configuration error */
+    (void)get_op_lock;
     ret = RNG_FAILURE_E;
 
 #endif /* HAVE_HASHDRBG */
@@ -5579,10 +5760,10 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
     return ret;
 }
 
-#ifdef WC_HAVE_RNG_BANKREF
 WOLFSSL_ABI
 int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
 {
+#ifdef WC_HAVE_RNG_BANKREF
     if (rng == NULL)
         return BAD_FUNC_ARG;
 
@@ -5602,7 +5783,7 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
         if (bank_inst == NULL)
             return BAD_STATE_E;
         ret = wc_local_RNG_GenerateBlock(WC_RNG_BANK_INST_TO_RNG(bank_inst),
-                                         output, sz);
+                                         output, sz, 1 /* get_lock_op */);
         {
             int checkin_ret = wc_rng_bank_inst_checkin(&bank_inst);
             if (checkin_ret != 0) {
@@ -5618,9 +5799,11 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
         return ret;
     }
     else
-        return wc_local_RNG_GenerateBlock(rng, output, sz);
+#endif /* WC_HAVE_RNG_BANKREF */
+    {
+        return wc_local_RNG_GenerateBlock(rng, output, sz, 1 /* get_lock_op */);
+    }
 }
-#endif
 
 int wc_RNG_GenerateByte(WC_RNG* rng, byte* b)
 {
@@ -5757,15 +5940,19 @@ int wc_FreeRng(WC_RNG* rng)
     }
 #endif
 
-#ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
-    if (rng->flags & WC_RNG_FLAG_FULL_MUTEX) {
-        /* If the latch is held, the caller is the holder (enforced when
-         * _LOCK_REQUIRED) and owns the mutex: release it before
-         * destruction.  A free latch means the mutex is unowned. */
-        if (WOLFSSL_ATOMIC_LOAD(rng->lock) & WC_RNG_LOCK_HELD)
-            (void)wc_UnLockMutex(&rng->mutex);
+#if defined(WC_RNG_HAVE_LOCK_FULL_MUTEX) || defined(WC_RNG_HAVE_OP_MUTEX)
+    if (rng->flags & (WC_RNG_FLAG_FULL_MUTEX | WC_RNG_FLAG_OP_MUTEX)) {
+#ifdef WC_RNG_HAVE_LOCK
+        if (rng->flags & WC_RNG_FLAG_FULL_MUTEX) {
+            /* If the latch is held, the caller is the holder (enforced when
+             * _LOCK_REQUIRED) and owns the mutex: release it before
+             * destruction.  A free latch means the mutex is unowned. */
+            if (WOLFSSL_ATOMIC_LOAD(rng->lock) & WC_RNG_LOCK_HELD)
+                (void)wc_UnLockMutex(&rng->mutex);
+        }
+#endif
         (void)wc_FreeMutex(&rng->mutex);
-        rng->flags &= ~WC_RNG_FLAG_FULL_MUTEX;
+        rng->flags &= ~(WC_RNG_FLAG_FULL_MUTEX | WC_RNG_FLAG_OP_MUTEX);
     }
 #endif
 

@@ -68,6 +68,16 @@
     #undef WC_RNG_HAVE_LOCK_FULL_MUTEX
 #endif
 
+#if (defined(WC_RNG_EXTRAS) || defined(WC_RNG_WANT_OP_MUTEX)) && \
+    !defined(WC_RNG_NO_OP_MUTEX)
+    #define WC_RNG_HAVE_OP_MUTEX
+#else
+    #undef WC_RNG_HAVE_OP_MUTEX
+#endif
+#if defined(WC_RNG_USE_OP_MUTEX_BY_DEFAULT) && !defined(WC_RNG_HAVE_OP_MUTEX)
+    #error WC_RNG_USE_OP_MUTEX_BY_DEFAULT requires WC_RNG_HAVE_OP_MUTEX.
+#endif
+
 #if (defined(WC_RNG_EXTRAS) || defined(WC_RNG_WANT_RBGC)) && \
     !defined(WC_RNG_NO_RBGC) && defined(HAVE_HASHDRBG) && \
     !defined(CUSTOM_RAND_GENERATE_BLOCK)
@@ -465,8 +475,9 @@ enum wc_RngHealthState {
 #define WC_RNG_FLAG_NONE           0
 #define WC_RNG_FLAG_RBGC_NEXT_SEED (1U << 0)
 #define WC_RNG_FLAG_FULL_MUTEX     (1U << 1)
-#define WC_RNG_FLAG_BANKREF        (1U << 2)
-#define WC_RNG_FLAG_RECOVER_AND_PROMOTE_FROM_NEXT_SEED (1U << 3)
+#define WC_RNG_FLAG_OP_MUTEX       (1U << 2)
+#define WC_RNG_FLAG_BANKREF        (1U << 3)
+#define WC_RNG_FLAG_RECOVER_AND_PROMOTE_FROM_NEXT_SEED (1U << 4)
 
 #ifndef WC_RNG_RBGC_USER_SEED_STRATUM
     #define WC_RNG_RBGC_USER_SEED_STRATUM 65536
@@ -510,11 +521,11 @@ struct WC_RNG {
         wc_rng_debug_counter_t _stats_RBGC_reseeds;
     #endif
 #endif
+#if defined(WC_RNG_HAVE_LOCK_FULL_MUTEX) || defined(WC_RNG_HAVE_OP_MUTEX)
+    wolfSSL_Mutex mutex;
+#endif
 #ifdef WC_RNG_HAVE_LOCK
     WC_RNG_lock_t lock;
-    #ifdef WC_RNG_HAVE_LOCK_FULL_MUTEX
-    wolfSSL_Mutex mutex;
-    #endif
     #ifdef WC_RNG_DEBUG_STATS
         wc_rng_debug_counter_t _stats_locks_taken;
         wc_rng_debug_counter_t _stats_locks_released;
@@ -743,12 +754,13 @@ WOLFSSL_API int  wc_InitRngNonce(WC_RNG* rng, const byte* nonce, word32 nonceSz)
 #define WC_RNG_INIT_FLAG_LOCK_REQUIRED   (1U << 0)
 #define WC_RNG_INIT_FLAG_LOCK_INITIALLY  (1U << 1)
 #define WC_RNG_INIT_FLAG_USE_FULL_MUTEX  (1U << 2)
+#define WC_RNG_INIT_FLAG_USE_OP_MUTEX    (1U << 3)
 /* At each generate, if a banked next seed is READY, consume it when the
  * instance is flagged _ENTROPY_INVALIDATED (recovery; any provenance), or
  * when the instance is chain-backed and the banked seed is primary
  * (promotion).  For externally-refreshed long-lived RNGs, e.g. the kernel
  * module's registered RBGC leaves. */
-#define WC_RNG_INIT_FLAG_RECOVER_AND_PROMOTE_FROM_NEXT_SEED (1U << 3)
+#define WC_RNG_INIT_FLAG_RECOVER_AND_PROMOTE_FROM_NEXT_SEED (1U << 4)
 
 WOLFSSL_API int  wc_InitRng_ex2(WC_RNG* rng, void* heap, int devId,
                                 word32 flags);
