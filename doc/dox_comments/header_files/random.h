@@ -513,12 +513,18 @@ int wc_SetSeed_Cb(wc_RngSeed_Cb cb);
 
 /*!
     \ingroup Random
-    \brief Reseeds DRBG with new entropy.
+    \brief Reseeds DRBG with new entropy.  In RBG-chain builds, a
+    successful user-supplied reseed marks rng with the user-provenance
+    stratum sentinel (WC_RNG_RBGC_USER_SEED_STRATUM); when built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS), the stratum is never
+    lowered, keeping instances that have ingested seed material of unknown
+    provenance permanently distinguishable from ESV-seeded lineage.
 
     \return 0 On success
     \return BAD_FUNC_ARG If rng or seed is NULL
     \return RNG_FAILURE_E Reseed failed
     \return BAD_MUTEX_E the rng's lock could not be taken
+    \return WRONG_TYPE_OBJECT_E rng has no DRBG (RDRAND et al.).
 
     \param rng WC_RNG to reseed
     \param seed Seed buffer
@@ -1092,14 +1098,20 @@ int wc_RNG_DRBG_Stir_Nonce(WC_RNG* rng, const byte* seed,
     \ingroup Random
 
     \brief Instantiate child as an SP 800-90C RBG-chain member subordinate to
-    parent, drawing its seed material from parent's generate function in
-    place of the module's seed source.  Every other aspect of instantiation
-    is wc_InitRng_ex2()'s.  The child is tagged with stratum
-    (parent's stratum + 1), sticky for the instance's lifetime even across
-    subsequent source reseeds; its claimable security strength is capped by
-    parent's, and it has no prediction resistance.  The caller must hold
-    exclusive access to parent for the duration of the call; the spawn debits
-    parent's reseed counter by one generate.
+    parent, drawing its seed material from parent's generate function in place
+    of the module's seed source.  Every other aspect of instantiation is
+    wc_InitRng_ex2()'s.  The child is tagged with stratum (parent's stratum +
+    1), and is relabeled at each credited reseed based on the seed source's
+    stratum unless built with WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS);
+    its claimable security strength is capped by parent's, and it has no
+    prediction resistance.  The caller must hold exclusive access to parent for
+    the duration of the call; the spawn debits parent's reseed counter by one
+    generate.
+
+    RNGs instantiated by `wc_InitRng()` or `wc_InitRng_ex2()` are root RNGs
+    corresponding to SP 800-90C Sec. 7.2.1.1; RNGs instantiated by
+    `wc_InitRngRBGC()` or `wc_InitRngNonceRBGC()` from a root or from any deeper
+    member correspond to the construction in Sec. 7.2.1.2.
 
     \return 0 Success
     \return BAD_FUNC_ARG child or parent is null, or child equals parent.
@@ -1118,6 +1130,8 @@ int wc_RNG_DRBG_Stir_Nonce(WC_RNG* rng, const byte* seed,
     }
     \endcode
 
+    \sa wc_InitRng
+    \sa wc_InitRng_ex2
     \sa wc_InitRngNonceRBGC
     \sa wc_InitRngRBGC_New
     \sa wc_RNG_DRBG_ReseedRBGC
@@ -1129,7 +1143,8 @@ int wc_InitRngRBGC(WC_RNG* child, WC_RNG* parent, word32 flags);
     \ingroup Random
 
     \brief The nonce-bearing form of wc_InitRngRBGC(): the nonce is used as
-    additional instantiation input, as in wc_InitRngNonce_ex2().
+    additional instantiation input, as in wc_InitRngNonce_ex2().  For further
+    details, see wc_InitRngRBGC().
 
     \return 0 Success
     \return BAD_FUNC_ARG child or parent is null, child equals parent, or
@@ -1153,7 +1168,7 @@ int wc_InitRngNonceRBGC(WC_RNG* child, WC_RNG* parent, const byte* nonce,
 
     \brief The allocating form of wc_InitRngRBGC(): the child is allocated
     from parent's heap and returned through child.  Release with
-    wc_rng_free().
+    wc_rng_free().  For further details, see wc_InitRngRBGC().
 
     \return 0 Success
     \return BAD_FUNC_ARG child or parent is null.
@@ -1172,7 +1187,8 @@ int wc_InitRngRBGC_New(WC_RNG** child, WC_RNG* parent, word32 flags);
 /*!
     \ingroup Random
 
-    \brief The allocating, nonce-bearing form of wc_InitRngRBGC().
+    \brief The allocating, nonce-bearing form of wc_InitRngRBGC().  For further
+    details, see wc_InitRngRBGC().
 
     \return 0 Success
     \return BAD_FUNC_ARG child or parent is null, or nonce is null with
@@ -1197,24 +1213,32 @@ int wc_InitRngNonceRBGC_New(WC_RNG** child, WC_RNG* parent, const byte* nonce,
 
     \brief Reseed rng from root's generate output -- the SP 800-90C chain
     reseed -- with an optional nonce as additional input.  The reseed is
-    credited (the reseed counter resets) and rng acquires root's stratum
-    plus one.  The caller must hold exclusive access to both instances.
+    credited (the reseed counter resets); rng's stratum is updated to root's
+    stratum + 1, unless built with WC_RNG_RBGC_STRATUM_IMMUTABLE (required for
+    FIPS).  The caller must hold exclusive access to both instances.
 
-    \details Credited chain reseeds obey a no-downgrade rule: a
-    primary-seeded (stratum-0) root is always accepted, and a chained
-    (stratum > 0) root is accepted only when its stratum is strictly less
-    than rng's -- the acquired stratum never increases, so reseed cycles
-    are impossible by construction, consistent with SP 800-90C 7.1.2.2.
-    Lateral (equal-stratum) and downgrading reseeds are refused with
-    BAD_FUNC_ARG.  Building WC_RNG_NO_RBGC_RESEED restricts credited chain
-    reseeds to primary-seeded roots.  Uncredited chain stirs
-    (wc_RNG_DRBG_StirRBGC()) are exempt from all of this: they
-    are stirs, claim nothing, and leave rng's stratum untouched.
+    \details Credited chain reseeds obey a no-downgrade rule: a primary-seeded
+    (stratum-0) root is always accepted, and a chained (stratum > 0) root is
+    accepted only when its stratum is strictly less than rng's -- with strata
+    sticky from init, credited seed material can only flow rootward-to-leafward,
+    so reseed cycles are impossible by construction, consistent with SP 800-90C
+    7.1.2.2.  Lateral (equal-stratum) and downgrading reseeds are refused with
+    BAD_FUNC_ARG.  A successful credited reseed re-tags rng with the source's
+    stratum plus one (or zero, for a primary source reseed) unless built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS).  When built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE, a credited chain reseed into a
+    primary-class (stratum-0) target is refused with WRONG_TYPE_OBJECT_E --
+    chain-fed state must never wear the primary-class label.  Building
+    WC_RNG_NO_RBGC_RESEED restricts credited chain reseeds to primary-seeded
+    roots.  Uncredited chain stirs (wc_RNG_DRBG_StirRBGC()) are exempt from all
+    of this: they are stirs, claim nothing, and leave rng's stratum untouched.
 
     \return 0 Success
     \return BAD_FUNC_ARG rng or root is null, rng equals root, or the
     no-downgrade rule refuses root as a chain parent (see \details).
-    \return WRONG_TYPE_OBJECT_E rng has no DRBG (RDRAND et al.).
+    \return WRONG_TYPE_OBJECT_E rng has no DRBG (RDRAND et al.), or rng is
+    primary-class (stratum 0) and the build is
+    WC_RNG_RBGC_STRATUM_IMMUTABLE (see \details).
     \return SEQ_OVERFLOW_E root's stratum is at the representable maximum.
 
     \param rng The chain member to reseed.
@@ -1259,9 +1283,13 @@ int wc_RNG_DRBG_StirRBGC(WC_RNG* rng, WC_RNG* root,
 /*!
     \ingroup Random
 
-    \brief Report rng's RBG-chain stratum: 0 for a root (never chain-seeded),
-    n for a member seeded from a stratum-(n-1) parent.  The stratum is sticky
-    for the instance's lifetime, even across subsequent source reseeds.
+    \brief Report rng's RBG-chain stratum: 0 for a root (never chain-seeded), n
+    for a member seeded from a stratum-(n-1) parent.  If built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS), the stratum is sticky for
+    the instance's lifetime, even across subsequent source reseeds; otherwise it
+    follows the stratum of the most recent credited seed source.  A
+    user-supplied reseed (wc_RNG_DRBG_Reseed()) marks rng with
+    WC_RNG_RBGC_USER_SEED_STRATUM regardless.
 
     \return 0 rng is a chain root.
     \return n The stratum, positive for a chain member.
@@ -1337,6 +1365,8 @@ int wc_RNG_DRBG_NextSeedGenerate(WC_RNG* rng, word32 n);
     \return NOT_READY_E The health test could not run; simply retry.
     \return BAD_FUNC_ARG rng or root is null, or n is 0.
     \return MISSING_RNG_E rng has no DRBG (RDRAND et al.).
+    \return WRONG_TYPE_OBJECT_E rng is primary-class (stratum 0) and the
+    build is WC_RNG_RBGC_STRATUM_IMMUTABLE (see \details).
     \return SEQ_OVERFLOW_E root's stratum is at the representable maximum.
 
     \param rng The RNG object whose bank to fill.
@@ -1351,8 +1381,11 @@ int wc_RNG_DRBG_NextSeedGenerate(WC_RNG* rng, word32 n);
     strictly less than rng's -- banking whose redemption would raise rng's
     stratum is refused with BAD_FUNC_ARG.  The banked material records
     root's stratum plus one, observable via
-    wc_RNG_DRBG_GetNextSeedRBGCStratum(), and redemption
-    (wc_RNG_DRBG_NextSeedNow()) carries it onto rng.
+    wc_RNG_DRBG_GetNextSeedRBGCStratum(); redemption (wc_RNG_DRBG_NextSeedNow())
+    imparts the recorded stratum to the rng, unless built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS).  When built with
+    WC_RNG_RBGC_STRATUM_IMMUTABLE, chain banking into a primary-class
+    (stratum-0) target is likewise refused, with WRONG_TYPE_OBJECT_E.
 
 */
 int wc_RNG_DRBG_NextSeedGenerate_RBGC(WC_RNG* rng, WC_RNG *root, word32 n);
