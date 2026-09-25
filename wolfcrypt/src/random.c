@@ -246,11 +246,31 @@ int wc_SetSeed_Cb(wc_RngSeed_Cb cb)
 
 
 /* Internal return codes */
-#define DRBG_SUCCESS      0
-#define DRBG_FAILURE      1
-#define DRBG_NEED_RESEED  2
-#define DRBG_CONT_FAILURE 3
-#define DRBG_NO_SEED_CB   4
+enum {
+    DRBG_SUCCESS = 0,
+    DRBG_FAILURE = 1,
+    DRBG_NEED_RESEED = 2,
+    DRBG_CONT_FAILURE = 3,
+    DRBG_NO_SEED_CB = 4
+};
+
+#ifdef WOLFSSL_DEBUG_TRACE_ERROR_CODES
+    enum {
+        CONST_NUM_ERR_DRBG_FAILURE = DRBG_FAILURE,
+        CONST_NUM_ERR_DRBG_NEED_RESEED = DRBG_NEED_RESEED,
+        CONST_NUM_ERR_DRBG_CONT_FAILURE = DRBG_CONT_FAILURE,
+        CONST_NUM_ERR_DRBG_NO_SEED_CB = DRBG_NO_SEED_CB
+    };
+    /* DRBG_SUCCESS needs to be macroized to avoid "enumerated and
+     * non-enumerated type in conditional expression" in C++. */
+    #define DRBG_SUCCESS (byte)DRBG_SUCCESS
+    #define DRBG_FAILURE (byte)WC_ERR_TRACE(DRBG_FAILURE)
+    #define DRBG_NEED_RESEED (byte)WC_ERR_TRACE(DRBG_NEED_RESEED)
+    #define DRBG_CONT_FAILURE (byte)WC_ERR_TRACE(DRBG_CONT_FAILURE)
+    #define DRBG_NO_SEED_CB (byte)WC_ERR_TRACE(DRBG_NO_SEED_CB)
+    #define WC_DRBG_FAILED (byte)WC_ERR_TRACE(WC_DRBG_FAILED)
+    #define WC_DRBG_CONT_FAILED (byte)WC_ERR_TRACE(WC_DRBG_CONT_FAILED)
+#endif
 
 /* RNG health states */
 #define DRBG_NOT_INIT     WC_DRBG_NOT_INIT
@@ -285,7 +305,7 @@ static int Hash_df(DRBG_internal* drbg, byte* out, word32 outSz, byte type,
                                                   const byte* inA, word32 inASz,
                                                   const byte* inB, word32 inBSz)
 {
-    int ret = DRBG_FAILURE;
+    int ret = WC_NO_ERR_TRACE(DRBG_FAILURE);
     byte ctr;
     word32 i;
     word32 len;
@@ -440,13 +460,22 @@ int wc_RNG_DRBG_Reseed(WC_RNG* rng, const byte* seed, word32 seedSz)
     #endif
     }
 
+#if defined(WC_RNG_HAVE_RBGC) && defined(WC_RNG_RBGC_STRATUM_IMMUTABLE)
+    /* When build settings forbid updating the RBGC stratum, we must refuse
+     * here, lest an RNG carrying the vetted ESV provenance marker be reseeded
+     * with an unvetted user seed. */
+    if (rng->RBGCStratum < WC_RNG_RBGC_USER_SEED_STRATUM)
+        return WRONG_TYPE_OBJECT_E;
+#endif
+
     {
         int ret = Hash_DRBG_Reseed((DRBG_internal *)rng->drbg, seed, seedSz);
 #ifdef WC_RNG_HAVE_RBGC
         if (ret == 0) {
             /* User-supplied entropy is of unknown provenance.  In RBGC builds,
              * represent that fact using WC_RNG_RBGC_USER_SEED_STRATUM, preventing confusion with RNGs seeded by the ESV . */
-            rng->RBGCStratum = WC_RNG_RBGC_USER_SEED_STRATUM;
+            if (rng->RBGCStratum < WC_RNG_RBGC_USER_SEED_STRATUM)
+                rng->RBGCStratum = WC_RNG_RBGC_USER_SEED_STRATUM;
         }
 #endif
         return ret;
@@ -482,7 +511,7 @@ int wc_RNG_DRBG_Reseed_Uncredited(WC_RNG* rng, const byte* seed, word32 seedSz)
     {
     case DRBG_SUCCESS:
         return 0;
-    case DRBG_NEED_RESEED:
+    case WC_NO_ERR_TRACE(DRBG_NEED_RESEED):
         return NOT_READY_E;
     default:
         return RNG_FAILURE_E;
@@ -501,7 +530,7 @@ static WC_INLINE void array_add_one(byte* data, word32 dataSz)
 /* Returns: DRBG_SUCCESS or DRBG_FAILURE */
 static int Hash_gen(DRBG_internal* drbg, byte* out, word32 outSz, const byte* V)
 {
-    int ret = DRBG_FAILURE;
+    int ret = WC_NO_ERR_TRACE(DRBG_FAILURE);
     word32 i;
     word32 len;
 #if defined(WOLFSSL_SMALL_STACK_CACHE)
@@ -799,7 +828,7 @@ static int Hash_DRBG_Instantiate(DRBG_internal* drbg, const byte* seed, word32 s
                                              const byte* nonce, word32 nonceSz,
                                              void* heap, int devId)
 {
-    int ret = DRBG_FAILURE;
+    int ret = WC_NO_ERR_TRACE(DRBG_FAILURE);
 
     XMEMSET(drbg, 0, sizeof(DRBG_internal));
     drbg->heap = heap;
@@ -1308,7 +1337,7 @@ int wc_InitRngNonceRBGC(WC_RNG* leaf, WC_RNG* root, const byte* nonce,
 #ifdef HAVE_HASHDRBG
 static int PollAndReSeed(WC_RNG* rng)
 {
-    int ret   = DRBG_NEED_RESEED;
+    int ret   = WC_NO_ERR_TRACE(DRBG_NEED_RESEED);
     int devId = INVALID_DEVID;
 #if defined(WOLFSSL_ASYNC_CRYPT) || defined(WOLF_CRYPTO_CB)
     devId = rng->devId;
@@ -1402,11 +1431,6 @@ int wc_RNG_DRBG_Reseed_Now(WC_RNG* rng, const byte* nonce, word32 nonceSz) {
     if ((nonce == NULL) && (nonceSz > 0))
         return BAD_FUNC_ARG;
 
-    /* nonce and nonceSz are here only for forward-compatibility with latest
-     * code; PollAndReSeed() does not recognize a nonce argument. */
-    if (nonceSz > 0)
-        return NOT_COMPILED_IN;
-
     /* Mirror wc_RNG_GenerateBlock(): only an in-service DRBG may reseed. */
     if (rng->status != DRBG_OK)
         return RNG_FAILURE_E;
@@ -1434,6 +1458,9 @@ int wc_RNG_DRBG_Reseed_Now(WC_RNG* rng, const byte* nonce, word32 nonceSz) {
         rng->status = DRBG_FAILED;
     }
 
+    if ((ret == 0) && (nonceSz > 0))
+        ret = wc_RNG_DRBG_Reseed_Uncredited(rng, nonce, nonceSz);
+
     return ret;
 }
 
@@ -1450,12 +1477,7 @@ int wc_RNG_DRBG_ReseedRBGC(WC_RNG* leaf, WC_RNG* root)
         return BAD_FUNC_ARG;
 
 #ifdef WC_RNG_HAVE_RBGC
-    if (root->RBGCStratum >= WC_MAX_SINT_OF(int))
-        return SEQ_OVERFLOW_E;
-    else if (root->RBGCStratum == WC_RNG_RBGC_USER_SEED_STRATUM - 1)
-        return SEQ_OVERFLOW_E;
-
-    if ((root->RBGCStratum > 0) && (root->RBGCStratum >= leaf->RBGCStratum))
+    if (root->RBGCStratum >= leaf->RBGCStratum)
         return BAD_FUNC_ARG;
 #endif
 
@@ -1479,10 +1501,6 @@ int wc_RNG_DRBG_ReseedRBGC(WC_RNG* leaf, WC_RNG* root)
     ret = wc_RNG_GenerateBlock(root, seed, SEED_SZ);
     if (ret == 0) {
         ret = Hash_DRBG_Reseed((DRBG_internal *)leaf->drbg, seed, SEED_SZ);
-#ifdef WC_RNG_HAVE_RBGC
-        if (ret == 0)
-            leaf->RBGCStratum = root->RBGCStratum + 1;
-#endif
     }
     ForceZero(seed, SEED_SZ);
 
