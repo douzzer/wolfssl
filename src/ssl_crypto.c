@@ -3963,11 +3963,29 @@ int wolfSSL_RAND_egd(const char* nm)
             ret = WOLFSSL_FATAL_ERROR;
         }
         else {
+#if defined(WC_RNG_HAVE_RBGC) && defined(WC_RNG_RBGC_STRATUM_IMMUTABLE)
+            /* Caller material carries no entropy credit; mix it as an
+             * uncredited stir -- credited user-class reseeds of conformant
+             * instances are refused with WC_RNG_RBGC_STRATUM_IMMUTABLE.
+             * NOT_READY_E (a credited reseed is due) outranks advisory
+             * material and is not a failure. */
+            {
+                int seed_ret = wc_RNG_DRBG_Stir(&globalRNG,
+                                                (const byte*) buf, bytes);
+                if ((seed_ret != 0) &&
+                    (seed_ret != WC_NO_ERR_TRACE(NOT_READY_E)))
+                {
+                    WOLFSSL_MSG("Error with stirring DRBG structure");
+                    ret = WOLFSSL_FATAL_ERROR;
+                }
+            }
+#else
             if (wc_RNG_DRBG_Reseed(&globalRNG, (const byte*) buf, bytes)
                     != 0) {
                 WOLFSSL_MSG("Error with reseeding DRBG structure");
                 ret = WOLFSSL_FATAL_ERROR;
             }
+#endif
             wc_UnLockMutex(&globalRNGMutex);
 
             #ifdef SHOW_SECRETS
@@ -4233,7 +4251,15 @@ int wolfSSL_RAND_poll(void)
     }
     else {
 #ifdef HAVE_HASHDRBG
+#if defined(WC_RNG_HAVE_RBGC) && defined(WC_RNG_RBGC_STRATUM_IMMUTABLE)
+        /* Polled system entropy is a primary-source reseed; the gathered
+         * bytes ride as additional input.  (A credited user-class reseed
+         * of a conformant instance is refused with
+         * WC_RNG_RBGC_STRATUM_IMMUTABLE.) */
+        ret = wc_RNG_DRBG_Reseed_Now(&globalRNG, entropy, entropy_sz);
+#else
         ret = wc_RNG_DRBG_Reseed(&globalRNG, entropy, entropy_sz);
+#endif
         if (ret != 0) {
             WOLFSSL_MSG("Error reseeding DRBG");
             ret = WOLFSSL_FAILURE;
@@ -4446,12 +4472,29 @@ int wolfSSL_RAND_load_file(const char* fname, long len)
             ret = WOLFSSL_FATAL_ERROR;
             break;
         }
+#if defined(WC_RNG_HAVE_RBGC) && defined(WC_RNG_RBGC_STRATUM_IMMUTABLE)
+        /* File material carries no entropy credit; mix it as an uncredited
+         * stir (NOT_READY_E is the stir's documented refusal while a
+         * credited reseed is due, not a failure). */
+        {
+            int seed_ret = wc_RNG_DRBG_Stir(&globalRNG, buf, (word32)n);
+            if ((seed_ret != 0) &&
+                (seed_ret != WC_NO_ERR_TRACE(NOT_READY_E)))
+            {
+                wc_UnLockMutex(&globalRNGMutex);
+                WOLFSSL_MSG("RAND_load_file: DRBG stir failed");
+                ret = WOLFSSL_FATAL_ERROR;
+                break;
+            }
+        }
+#else
         if (wc_RNG_DRBG_Reseed(&globalRNG, buf, (word32)n) != 0) {
             wc_UnLockMutex(&globalRNGMutex);
             WOLFSSL_MSG("RAND_load_file: DRBG reseed failed");
             ret = WOLFSSL_FATAL_ERROR;
             break;
         }
+#endif
         wc_UnLockMutex(&globalRNGMutex);
         readSoFar += (long)n;
     }
