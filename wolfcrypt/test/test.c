@@ -981,6 +981,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  noisesrc_test(void);
     (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0)) && !defined(HAVE_SELFTEST)
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  rng_drbg_svc_test(void);
 #endif
+
 #if defined(HAVE_WC_RNG_BANK) && defined(HAVE_HASHDRBG) && \
     (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(5,2,4)) && \
     !defined(HAVE_INTEL_RDRAND)
@@ -29654,6 +29655,18 @@ out_free:
 
 #endif /* WC_TEST_RNG_AUTOLOCK */
 
+#ifdef WC_RNG_HAVE_RBGC
+/* Post-init credited reseeds relabel RBGCStratum unless
+ * WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS), wherein the stratum is
+ * frozen at init (genealogical birth depth).  Expectations pivot
+ * accordingly. */
+#ifdef WC_RNG_RBGC_STRATUM_IMMUTABLE
+    #define RBGC_RESEED_STRATUM(updated, frozen) (frozen)
+#else
+    #define RBGC_RESEED_STRATUM(updated, frozen) (updated)
+#endif
+#endif /* WC_RNG_HAVE_RBGC */
+
 #ifdef HAVE_WC_RNG_BANK
 
 static char *rng_bank_affinity_lock_lock;
@@ -29675,18 +29688,6 @@ static int rng_bank_affinity_unlock(void *arg) {
     rng_bank_affinity_lock_lock = (char *)arg + 2;
     return 0;
 }
-
-#ifdef WC_RNG_HAVE_RBGC
-/* Post-init credited reseeds relabel RBGCStratum unless
- * WC_RNG_RBGC_STRATUM_IMMUTABLE (required for FIPS), wherein the stratum is
- * frozen at init (genealogical birth depth).  Expectations pivot
- * accordingly. */
-#ifdef WC_RNG_RBGC_STRATUM_IMMUTABLE
-    #define RBGC_RESEED_STRATUM(updated, frozen) (frozen)
-#else
-    #define RBGC_RESEED_STRATUM(updated, frozen) (updated)
-#endif
-#endif /* WC_RNG_HAVE_RBGC */
 
 #if defined(WC_RNG_HAVE_RBGC) && defined(WC_RNG_RBGC_STRATUM_IMMUTABLE)
     /* credited user-class seeding of conformant bank instances is refused
